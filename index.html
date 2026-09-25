@@ -1243,14 +1243,6 @@ function extractIsobarsOnly(svgText){
   const {w,h}=normalizeSvgRoot(svg);
   lastSvgDims={w,h};
 
-  try{
-    const metaText=svg.querySelector('metadata')?.textContent||'';
-    const meta=metaText?JSON.parse(metaText):null;
-    if(meta?.displayMode && ['pipe','wall','solid'].includes(meta.displayMode)) ui.displayMode.value=meta.displayMode;
-    if(isFinite(meta?.displayHue)) ui.displayHue.value=String(meta.displayHue);
-    if(isFinite(meta?.displayOpacity)) ui.displayOpacity.value=String(meta.displayOpacity);
-    updateStyleControlLabels();
-  }catch{}
   const contours=svg.querySelectorAll('g#weatherChart g.contour');
   const outDoc=document.implementation.createDocument("http://www.w3.org/2000/svg","svg",null);
   const outSvg=outDoc.documentElement; outSvg.setAttribute("xmlns","http://www.w3.org/2000/svg");
@@ -1391,6 +1383,15 @@ async function loadProjectSVG(svgText){
 
   const {w,h}=normalizeSvgRoot(svg);
   lastSvgDims={w,h};
+
+  try{
+    const metaText=svg.querySelector('metadata')?.textContent||'';
+    const meta=metaText?JSON.parse(metaText):null;
+    if(meta?.displayMode && ['pipe','wall','solid'].includes(meta.displayMode)) ui.displayMode.value=meta.displayMode;
+    if(isFinite(meta?.displayHue)) ui.displayHue.value=String(meta.displayHue);
+    if(isFinite(meta?.displayOpacity)) ui.displayOpacity.value=String(meta.displayOpacity);
+    updateStyleControlLabels();
+  }catch{}
 
   const svgClone = svg.cloneNode(true);
   const iso = svgClone.querySelector('g#isobars3d[data-app="3disobarsplus"]');
