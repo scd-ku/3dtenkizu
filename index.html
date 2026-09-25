@@ -357,11 +357,11 @@
         </select>
       </div>
       <div class="row">
-        <label>色</label>
+        <label>色相補正</label>
         <div class="styleControl">
-          <input id="displayHue" type="range" min="0" max="360" step="1" value="210">
+          <input id="displayHue" type="range" min="-180" max="180" step="1" value="0">
           <span id="displayColorPreview" aria-hidden="true"></span>
-          <span id="displayHueValue" class="styleValue">210°</span>
+          <span id="displayHueValue" class="styleValue">0°</span>
         </div>
       </div>
       <div class="row">
@@ -372,7 +372,7 @@
         </div>
       </div>
       <div class="muted" style="margin:.15rem 0 .65rem">
-        壁：パイプと同じ幅の壁面　／　立体：閉じた等圧線を段状の台地として表示
+        色は高さに応じて赤→青へ変化します。色相補正で全体の色味を調整できます。<br>壁：パイプと同じ幅の壁面　／　立体：隣り合う閉じた等圧線の間を段状の面でつなぎます
       </div>
     </div>
 
@@ -448,7 +448,7 @@
     </ul>
 
     <h3>3. 表示モード</h3>
-    <p>設定パネルの「表示スタイル」で、等圧線を「パイプ」「壁」「立体」から選べます。「壁」はパイプと同じ幅で地面から等圧線の高さまで立ち上がります。「立体」は閉じた等圧線を建築のコンター模型のような段状の台地として表示します。色と透明度もスライダーで変更できます。</p>
+    <p>設定パネルの「表示スタイル」で、等圧線を「パイプ」「壁」「立体」から選べます。「壁」はパイプと同じ幅で地面から等圧線の高さまで立ち上がります。「立体」は閉じた等圧線の包含関係を調べ、隣り合う等圧線の間を水平面と側面でつないだ建築のコンター模型のような段状地形として表示します。色は高さに応じて赤から青へ変化し、色相補正と透明度をスライダーで調整できます。</p>
 
     <h3>4. 等圧線の高さを変える</h3>
     <p>マウスを等圧線に重ねるとオレンジ色に強調され、気圧と高さが表示されます。等圧線を上下にドラッグすると高さを変更できます。Shiftキーを押しながら動かすと細かく、Altキーを押しながら動かすと大きく変更できます。右側パネルのスライダーや数値入力でも調整できます。</p>
@@ -738,26 +738,116 @@ function buildWallGeometry(points,halfWidth=PIPE_RADIUS){
   return g;
 }
 
-function buildSolidGeometry(points){
-  const pts=decimatePoints(points,180);
-  const shape=new THREE.Shape();
-  shape.moveTo(pts[0].x,pts[0].y);
-  for(let i=1;i<pts.length;i++) shape.lineTo(pts[i].x,pts[i].y);
-  shape.closePath();
-  const g=new THREE.ExtrudeGeometry(shape,{
-    depth:1,bevelEnabled:false,steps:1,curveSegments:1
-  });
+
+function normalizedContourPoints(points,maxPoints=160){
+  const pts=decimatePoints(points,maxPoints);
+  if(pts.length>2 && pts[0].distanceTo(pts[pts.length-1])<1e-5) pts.pop();
+  return pts;
+}
+
+function pointInPolygon2D(point,points){
+  const pts=normalizedContourPoints(points,220);
+  let inside=false;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+    const xi=pts[i].x, yi=pts[i].y, xj=pts[j].x, yj=pts[j].y;
+    const intersects=((yi>point.y)!==(yj>point.y)) &&
+      (point.x < (xj-xi)*(point.y-yi)/((yj-yi)||1e-12)+xi);
+    if(intersects) inside=!inside;
+  }
+  return inside;
+}
+
+function contourCenter(points){
+  const pts=normalizedContourPoints(points,160);
+  const v=new THREE.Vector2();
+  for(const p of pts){v.x+=p.x;v.y+=p.y;}
+  if(pts.length){v.x/=pts.length;v.y/=pts.length;}
+  return v;
+}
+
+function computeContourHierarchy(){
+  for(const it of items){
+    it.parentContour=null;
+    it.childContours=[];
+  }
+  const closed=items.filter(it=>it.isClosed);
+  for(const child of closed){
+    const sample=contourCenter(child.pathPoints);
+    let best=null;
+    for(const candidate of closed){
+      if(candidate===child) continue;
+      if(!(candidate.area>child.area*1.001)) continue;
+      if(!pointInPolygon2D(sample,candidate.pathPoints)) continue;
+      if(!best || candidate.area<best.area) best=candidate;
+    }
+    child.parentContour=best;
+    if(best) best.childContours.push(child);
+  }
+}
+
+function buildCurtainGeometry(points,closed=true){
+  const pts=normalizedContourPoints(points,180);
+  const pos=[];
+  const tri=(a,b,d)=>{pos.push(...a,...b,...d);};
+  const n=pts.length;
+  const count=closed?n:n-1;
+  for(let i=0;i<count;i++){
+    const a=pts[i], b=pts[(i+1)%n];
+    if(a.distanceTo(b)<1e-5) continue;
+    const a0=[a.x,a.y,0], b0=[b.x,b.y,0];
+    const a1=[a.x,a.y,1], b1=[b.x,b.y,1];
+    tri(a0,b0,b1); tri(a0,b1,a1);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
   g.computeVertexNormals();
   return g;
 }
 
-function displayBaseColor(){
-  const c=new THREE.Color();
-  c.setHSL((parseFloat(ui.displayHue.value)||0)/360,0.72,0.52);
-  return c;
+function buildTerraceTopGeometry(it){
+  const outer=normalizedContourPoints(it.pathPoints,180);
+  if(outer.length<3) return new THREE.BufferGeometry();
+
+  let outer2=outer.map(p=>new THREE.Vector2(p.x,p.y));
+  if(!THREE.ShapeUtils.isClockWise(outer2)) outer2=outer2.reverse();
+
+  const shape=new THREE.Shape();
+  shape.moveTo(outer2[0].x,outer2[0].y);
+  for(let i=1;i<outer2.length;i++) shape.lineTo(outer2[i].x,outer2[i].y);
+  shape.closePath();
+
+  for(const child of (it.childContours||[])){
+    let hp=normalizedContourPoints(child.pathPoints,120).map(p=>new THREE.Vector2(p.x,p.y));
+    if(hp.length<3) continue;
+    if(THREE.ShapeUtils.isClockWise(hp)) hp=hp.reverse();
+    const hole=new THREE.Path();
+    hole.moveTo(hp[0].x,hp[0].y);
+    for(let i=1;i<hp.length;i++) hole.lineTo(hp[i].x,hp[i].y);
+    hole.closePath();
+    shape.holes.push(hole);
+  }
+
+  const g=new THREE.ShapeGeometry(shape);
+  g.computeVertexNormals();
+  return g;
 }
+
 function displayOpacity(){
   return Math.max(0.1,Math.min(1,parseFloat(ui.displayOpacity.value)||1));
+}
+
+function heightColorForValue(h,maxH){
+  const col=colorFromHeight(h,maxH);
+  const offset=(parseFloat(ui.displayHue.value)||0)/360;
+  if(Math.abs(offset)>1e-6){
+    const hsl={h:0,s:0,l:0};
+    col.getHSL(hsl);
+    col.setHSL((hsl.h+offset+1)%1,hsl.s,hsl.l);
+  }
+  return col;
+}
+function heightColorForItem(it){
+  return heightColorForValue(it.height,currentMaxHeightStrict());
 }
 
 function makeSurfaceMaterial(color){
@@ -776,9 +866,30 @@ function makePickMaterial(){
   });
 }
 
-function makeDisplayMeshes(points,isClosed=false){
+function makeHoverMesh(points){
+  if(rendererMode==='svg'){
+    const g=new THREE.BufferGeometry().setFromPoints(points);
+    const m=new THREE.LineBasicMaterial({color:0xffb000,transparent:true,opacity:0.95,depthTest:false});
+    const line=new THREE.Line(g,m);
+    line.renderOrder=1000;
+    line.visible=false;
+    return line;
+  }
+  const g=buildTubeGeometry(points,PIPE_RADIUS*1.7);
+  const m=new THREE.MeshBasicMaterial({
+    color:0xffb000,transparent:true,opacity:0.72,depthWrite:false,depthTest:false,
+    side:THREE.DoubleSide
+  });
+  const mesh=new THREE.Mesh(g,m);
+  mesh.renderOrder=1000;
+  mesh.visible=false;
+  return mesh;
+}
+
+function makeDisplayMeshes(it){
   const mode=ui.displayMode.value;
-  const color=displayBaseColor();
+  const color=heightColorForItem(it);
+  const points=it.pathPoints;
 
   if(mode==='pipe'){
     if(rendererMode==='svg'){
@@ -797,15 +908,30 @@ function makeDisplayMeshes(points,isClosed=false){
     return {pipeMesh,pickPipeMesh,geometryMode:'pipe'};
   }
 
-  if(mode==='solid' && isClosed){
-    const g=buildSolidGeometry(points);
-    const pipeMesh=new THREE.Mesh(g,makeSurfaceMaterial(color));
-    const pickPipeMesh=new THREE.Mesh(g.clone(),makePickMaterial());
-    pickPipeMesh.renderOrder=-1000;
-    return {pipeMesh,pickPipeMesh,geometryMode:'solid'};
+  if(mode==='solid' && it.isClosed){
+    const group=new THREE.Group();
+    const pickGroup=new THREE.Group();
+
+    const topGeom=buildTerraceTopGeometry(it);
+    const wallGeom=buildCurtainGeometry(points,true);
+
+    const top=new THREE.Mesh(topGeom,makeSurfaceMaterial(color));
+    top.name='terraceTop';
+    const side=new THREE.Mesh(wallGeom,makeSurfaceMaterial(color));
+    side.name='terraceWall';
+    group.add(top,side);
+
+    const pTop=new THREE.Mesh(topGeom.clone(),makePickMaterial());
+    pTop.name='terraceTop';
+    const pSide=new THREE.Mesh(wallGeom.clone(),makePickMaterial());
+    pSide.name='terraceWall';
+    pickGroup.add(pTop,pSide);
+    pickGroup.renderOrder=-1000;
+
+    return {pipeMesh:group,pickPipeMesh:pickGroup,geometryMode:'solid'};
   }
 
-  // 壁モード、および立体モードの開いた等圧線は壁として表示。
+  // 壁モード、および立体モードで閉じていない等圧線。
   const g=buildWallGeometry(points,PIPE_RADIUS);
   const pipeMesh=new THREE.Mesh(g,makeSurfaceMaterial(color));
   const pickPipeMesh=new THREE.Mesh(g.clone(),makePickMaterial());
@@ -832,8 +958,8 @@ function setObjectAppearance(obj,color,opacity){
       m.opacity=opacity;
       if('depthWrite' in m) m.depthWrite=opacity>0.65;
       if(m.emissive){
-        m.emissive.set(hoveredItem && hoveredItem.pipeMesh===obj ? 0x442000 : 0x000000);
-        m.emissiveIntensity=hoveredItem && hoveredItem.pipeMesh===obj ? 0.6 : 0;
+        m.emissive.set(0x000000);
+        m.emissiveIntensity=0;
       }
       m.needsUpdate=true;
     }
@@ -841,51 +967,82 @@ function setObjectAppearance(obj,color,opacity){
 }
 
 function attachDisplayObjects(it,group){
-  const made=makeDisplayMeshes(it.pathPoints,it.isClosed);
+  const made=makeDisplayMeshes(it);
   it.pipeMesh=made.pipeMesh;
   it.pickPipeMesh=made.pickPipeMesh;
   it.geometryMode=made.geometryMode;
+  it.hoverMesh=makeHoverMesh(it.pathPoints);
+
   it.pickPipeMesh.traverse?.(o=>{ o.userData.contourItem=it; });
   it.pickPipeMesh.userData.contourItem=it;
+
   const visible=it.ui?.vis?.checked ?? true;
   it.pipeMesh.visible=visible;
   it.pickPipeMesh.visible=visible;
-  group.add(it.pipeMesh,it.pickPipeMesh);
-}
+  it.hoverMesh.visible=false;
 
-function effectiveLayerHeight(z){
-  if(Math.abs(z)>0.01) return z;
-  return PIPE_RADIUS*0.8;
+  group.add(it.pipeMesh,it.pickPipeMesh,it.hoverMesh);
 }
 
 function applyItemTransform(it){
-  const z=it.height*parseFloat(ui.heightScale.value);
+  const s=parseFloat(ui.heightScale.value);
+  const z=it.height*s;
+
+  if(it.hoverMesh){
+    it.hoverMesh.position.set(0,0,z);
+    it.hoverMesh.scale.set(1,1,1);
+  }
+
   if(it.geometryMode==='pipe'){
     it.pipeMesh.position.set(0,0,z);
     it.pickPipeMesh.position.set(0,0,z);
     it.pipeMesh.scale.set(1,1,1);
     it.pickPipeMesh.scale.set(1,1,1);
-  }else{
-    const h=effectiveLayerHeight(z);
-    it.pipeMesh.position.set(0,0,0);
-    it.pickPipeMesh.position.set(0,0,0);
-    it.pipeMesh.scale.set(1,1,h);
-    it.pickPipeMesh.scale.set(1,1,h);
+    return;
   }
+
+  if(it.geometryMode==='solid'){
+    const parentZ=it.parentContour ? it.parentContour.height*s : 0;
+    const low=Math.min(parentZ,z);
+    const dh=Math.max(Math.abs(z-parentZ),0.01);
+
+    for(const group of [it.pipeMesh,it.pickPipeMesh]){
+      const top=group.getObjectByName('terraceTop');
+      const wall=group.getObjectByName('terraceWall');
+      if(top){
+        top.position.set(0,0,z);
+        top.scale.set(1,1,1);
+      }
+      if(wall){
+        wall.position.set(0,0,low);
+        wall.scale.set(1,1,dh);
+      }
+    }
+    return;
+  }
+
+  // 壁は基準面(0)から等圧線の高さまで立ち上げる。
+  const low=Math.min(0,z);
+  const dh=Math.max(Math.abs(z),0.01);
+  it.pipeMesh.position.set(0,0,low);
+  it.pickPipeMesh.position.set(0,0,low);
+  it.pipeMesh.scale.set(1,1,dh);
+  it.pickPipeMesh.scale.set(1,1,dh);
 }
 
 function applyItemAppearance(it){
-  const hover=hoveredItem===it;
-  const col=hover?HOVER_COLOR:displayBaseColor();
-  const op=hover?1:displayOpacity();
+  const col=heightColorForItem(it);
+  const op=displayOpacity();
   setObjectAppearance(it.pipeMesh,col,op);
 }
 
 function rebuildAllDisplayGeometry(){
   if(!currentLinesGroup) return;
+  computeContourHierarchy();
   for(const it of items){
     disposeObject(it.pipeMesh);
     disposeObject(it.pickPipeMesh);
+    disposeObject(it.hoverMesh);
   }
   currentLinesGroup.clear();
   for(const it of items) attachDisplayObjects(it,currentLinesGroup);
@@ -1010,9 +1167,13 @@ async function loadSVGFromString(svgText){
         userColor:null,kind:'svg',geometryMode:'pipe'
       };
       items.push(it);
-      attachDisplayObjects(it,linesGroup);
-      it.activePick=it.pickPipeMesh;
     }
+  }
+
+  computeContourHierarchy();
+  for(const it of items){
+    attachDisplayObjects(it,linesGroup);
+    it.activePick=it.pickPipeMesh;
   }
 
   const box=new THREE.Box3().setFromObject(linesGroup); const cen3=new THREE.Vector3(), sz=new THREE.Vector3();
@@ -1108,8 +1269,12 @@ function buildList(orderByPressure=false){
     const card=document.createElement('div'); card.className='card';
     const t=document.createElement('div'); t.className='t';
     const c=document.createElement('span'); c.className='chip'; c.textContent=`線 ${(++i).toString().padStart(2,'0')}`;
-    const vis=document.createElement('input'); vis.type='checkbox'; vis.checked=true; vis.title='表示/非表示';
-    vis.onchange=()=>{ if(it.pipeMesh) it.pipeMesh.visible=vis.checked; if(it.pickPipeMesh) it.pickPipeMesh.visible=vis.checked; };
+    const vis=document.createElement('input'); vis.type='checkbox'; vis.checked=it.ui?.vis?.checked ?? true; vis.title='表示/非表示';
+    vis.onchange=()=>{
+      if(it.pipeMesh) it.pipeMesh.visible=vis.checked;
+      if(it.pickPipeMesh) it.pickPipeMesh.visible=vis.checked;
+      if(it.hoverMesh && !vis.checked) it.hoverMesh.visible=false;
+    };
     const tag=document.createElement('span'); tag.className='small muted'; tag.textContent=(it.kind==='svg')?(isFinite(it.pressure)?`P=${it.pressure}`:`P=?`):'';
     t.append(c,vis,tag); card.appendChild(t);
 
@@ -1159,9 +1324,11 @@ function updateHudByClientXY(clientX,clientY,h,prefix='高さ'){
 function setHoveredItem(it,clientX,clientY){
   if(hoveredItem!==it){
     const prev=hoveredItem;
+    if(prev?.hoverMesh) prev.hoverMesh.visible=false;
     hoveredItem=it;
-    if(prev) applyItemAppearance(prev);
-    if(hoveredItem) applyItemAppearance(hoveredItem);
+    if(hoveredItem?.hoverMesh && (hoveredItem.ui?.vis?.checked ?? true)){
+      hoveredItem.hoverMesh.visible=true;
+    }
   }
   if(it && !draggingItem){
     const p=isFinite(it.pressure)?`P=${it.pressure} hPa`:`線 ${String(it.listIndex||'').padStart(2,'0')}`;
@@ -1299,7 +1466,7 @@ function buildProjectSVG(){
     const pts2 = canonical3Dto2D(ptsCanon3);
     const poly = doc.createElementNS("http://www.w3.org/2000/svg","polyline");
     poly.setAttribute("fill","none");
-    const col=`#${displayBaseColor().getHexString()}`;
+    const col=`#${heightColorForItem(it).getHexString()}`;
     poly.setAttribute("stroke", col);
     poly.setAttribute("stroke-width","1");
     poly.setAttribute("points", pointsToAttr2D(pts2));
@@ -1339,20 +1506,53 @@ function doExportSTL(){
   const exporter=new STLExporter();
   const group=new THREE.Group();
   const mode=ui.displayMode.value;
+  const s=parseFloat(ui.heightScale.value);
+
+  computeContourHierarchy();
+
   for(const it of items){
     if(!(it.ui?.vis?.checked ?? true)) continue;
-    let geom;
-    let geometryMode=mode;
-    if(mode==='pipe') geom=buildTubeGeometry(it.pathPoints,PIPE_RADIUS);
-    else if(mode==='solid' && it.isClosed) geom=buildSolidGeometry(it.pathPoints);
-    else { geom=buildWallGeometry(it.pathPoints,PIPE_RADIUS); geometryMode='wall'; }
 
-    const mesh=new THREE.Mesh(geom,new THREE.MeshBasicMaterial({color:displayBaseColor()}));
-    const z=it.height*parseFloat(ui.heightScale.value);
-    if(geometryMode==='pipe') mesh.position.z=z;
-    else mesh.scale.z=effectiveLayerHeight(z);
-    group.add(mesh);
+    if(mode==='pipe'){
+      const mesh=new THREE.Mesh(
+        buildTubeGeometry(it.pathPoints,PIPE_RADIUS),
+        new THREE.MeshBasicMaterial({color:heightColorForItem(it)})
+      );
+      mesh.position.z=it.height*s;
+      group.add(mesh);
+      continue;
+    }
+
+    if(mode==='solid' && it.isClosed){
+      const z=it.height*s;
+      const parentZ=it.parentContour?it.parentContour.height*s:0;
+      const top=new THREE.Mesh(
+        buildTerraceTopGeometry(it),
+        new THREE.MeshBasicMaterial({color:heightColorForItem(it),side:THREE.DoubleSide})
+      );
+      top.position.z=z;
+      group.add(top);
+
+      const side=new THREE.Mesh(
+        buildCurtainGeometry(it.pathPoints,true),
+        new THREE.MeshBasicMaterial({color:heightColorForItem(it),side:THREE.DoubleSide})
+      );
+      side.position.z=Math.min(parentZ,z);
+      side.scale.z=Math.max(Math.abs(z-parentZ),0.01);
+      group.add(side);
+      continue;
+    }
+
+    const wall=new THREE.Mesh(
+      buildWallGeometry(it.pathPoints,PIPE_RADIUS),
+      new THREE.MeshBasicMaterial({color:heightColorForItem(it),side:THREE.DoubleSide})
+    );
+    const z=it.height*s;
+    wall.position.z=Math.min(0,z);
+    wall.scale.z=Math.max(Math.abs(z),0.01);
+    group.add(wall);
   }
+
   const stl=exporter.parse(group);
   const blob=new Blob([stl],{type:'model/stl'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='3dtenkizu.stl'; a.click();
@@ -1424,10 +1624,14 @@ async function loadProjectSVG(svgText){
       activePick:null,
       pathPoints,path2D:pts2,
       isClosed:isClosedContour(pathPoints),
-      height,ui:{vis:{checked:visible}},centroid:{x:0,y:0},pressure:undefined,area:0,autoTarget:0,
+      height,ui:{vis:{checked:visible}},centroid:centroidXY(pts2),pressure:undefined,area:polygonArea(pts2),autoTarget:0,
       userColor,kind:'svg',geometryMode:'pipe'
     };
     items.push(it);
+  }
+
+  computeContourHierarchy();
+  for(const it of items){
     attachDisplayObjects(it,linesGroup);
     it.activePick=it.pickPipeMesh;
   }
@@ -1775,12 +1979,13 @@ addEventListener('keydown',e=>{
 function updateStyleControlLabels(){
   const hue=parseFloat(ui.displayHue.value)||0;
   const opacity=displayOpacity();
-  ui.displayHueValue.textContent=`${Math.round(hue)}°`;
+  ui.displayHueValue.textContent=`${hue>0?'+':''}${Math.round(hue)}°`;
   ui.displayOpacityValue.textContent=`${Math.round(opacity*100)}%`;
-  const c=new THREE.Color(); c.setHSL(hue/360,0.72,0.52);
-  ui.displayColorPreview.style.background=`#${c.getHexString()}`;
+  const preview=heightColorForValue(0.5,1);
+  ui.displayColorPreview.style.background=`#${preview.getHexString()}`;
 }
 ui.displayMode.addEventListener('change',()=>{
+  if(hoveredItem?.hoverMesh) hoveredItem.hoverMesh.visible=false;
   hoveredItem=null;
   ui.dragHud.style.display='none';
   rebuildAllDisplayGeometry();
