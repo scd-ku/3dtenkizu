@@ -377,13 +377,17 @@
           <span id="displayOpacityValue" class="styleValue">90%</span>
         </div>
       </div>
+      <div class="row" id="solidContourRow">
+        <label>立体の等圧線</label>
+        <input id="solidContourVisible" type="checkbox" checked title="立体モードで等圧線を表示">
+      </div>
       <div class="muted" style="margin:.15rem 0 .65rem">
         色は高さに応じて赤→青へ変化します。色相補正で全体の色味を調整できます。<br>壁：パイプと同じ幅の壁面　／　立体：隣り合う閉じた等圧線の間を段状の面でつなぎます
       </div>
     </div>
 
-    <div class="section">
-      <h2>
+    <div class="section collapsible" data-section="list">
+      <h2 role="button" tabindex="0" aria-expanded="true">
         <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
             <path d="M3 7c3-3 6 3 9 0s6 3 9 0M3 12c3-3 6 3 9 0s6 3 9 0M3 17c3-3 6 3 9 0s6 3 9 0"></path>
@@ -492,6 +496,8 @@ const ui = {
   displayColorPreview: document.getElementById('displayColorPreview'),
   displayOpacity: document.getElementById('displayOpacity'),
   displayOpacityValue: document.getElementById('displayOpacityValue'),
+  solidContourVisible: document.getElementById('solidContourVisible'),
+  solidContourRow: document.getElementById('solidContourRow'),
   basisVisible: document.getElementById('basisVisible'),
   gridVisible: document.getElementById('gridVisible'),
   imgOpacity: document.getElementById('imgOpacity'),
