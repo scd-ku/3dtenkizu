@@ -331,11 +331,11 @@
         全体設定
       </h2>
       <div class="row"><label>背景色</label><input id="bgColor" type="color" value="#dff0ff"></div>
-      <div class="row"><label>基準（軸＆キューブ）</label><input id="basisVisible" type="checkbox" checked></div>
+      <div class="row"><label>座標軸</label><input id="basisVisible" type="checkbox" checked></div>
       <div class="row"><label>グリッド（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
-      <div class="row"><label>高さ倍率（Z）</label><input id="heightScale" type="range" min="0.1" max="20" step="0.1" value="5"></div>
-      <div class="row"><label>ドラッグ感度</label><input id="dragSensitivity" type="range" min="0.05" max="2.0" step="0.05" value="0.3"></div>
-      <div class="row"><label>サンプリング密度（読み込み）</label><input id="sample" type="range" min="32" max="1000" step="1" value="240"></div>
+      <div class="row"><label>自動高さ</label><input id="autoMode" type="checkbox"></div>
+      <div class="row"><label>間隔</label><input id="gapFactor" type="range" min="0.2" max="1" step="0.02" value="0.82"></div>
+      <div class="row"><span class="muted" id="labelInfo">ラベル未解析</span><span></span></div>
     </div>
 
     <div class="section">
@@ -394,22 +394,6 @@
     <div class="section">
       <h2>
         <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
-          <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M5 18h14M7 15l3-3 3 2 4-6"></path>
-            <path d="M15 8h2v2"></path>
-          </g>
-        </svg>
-        自動高さ（ラベル順）
-      </h2>
-      <div class="row"><label>自動高さを使う</label><input id="autoMode" type="checkbox"></div>
-      <div class="row"><label>間隔倍率</label><input id="gapFactor" type="range" min="0.2" max="3" step="0.05" value="1"></div>
-      <div class="row"><label>平坦 ←→ 初期間隔</label><input id="autoBlend" type="range" min="0" max="1" step="0.01" value="1"></div>
-      <div class="row"><span class="muted" id="labelInfo">ラベル未解析</span><span></span></div>
-    </div>
-
-    <div class="section">
-      <h2>
-        <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
             <path d="M3 7c3-3 6 3 9 0s6 3 9 0M3 12c3-3 6 3 9 0s6 3 9 0M3 17c3-3 6 3 9 0s6 3 9 0"></path>
           </g>
@@ -454,10 +438,10 @@
     <p>マウスを等圧線に重ねるとオレンジ色に強調され、気圧と高さが表示されます。等圧線を上下にドラッグすると高さを変更できます。Shiftキーを押しながら動かすと細かく、Altキーを押しながら動かすと大きく変更できます。右側パネルのスライダーや数値入力でも調整できます。</p>
 
     <h3>5. 自動高さ</h3>
-    <p>「自動高さを使う」をONにすると、天気図に含まれる気圧ラベルを読み取り、等圧線を気圧の順に高さ方向へ配置します。「間隔倍率」「平坦 ←→ 初期間隔」で立体感を調整できます。</p>
+    <p>「全体設定」の「自動高さ」をONにすると、気圧ラベルの順に等圧線を高さ方向へ配置します。最高点はZ軸矢印の内側に収まり、「間隔」だけで高さ方向の広がりを調整できます。</p>
 
     <h3>6. 表示と書き出し</h3>
-    <p>背景画像の不透明度・Z位置、グリッド、軸、背景色、高さ倍率を変更できます。「書き出し」からSTLまたは本アプリ用SVGを保存できます。従来どおり、手元のSVG/SVGZを「開く」から読み込むこともできます。</p>
+    <p>背景画像の不透明度・Z位置、グリッド、座標軸、背景色を変更できます。「書き出し」からSTLまたは本アプリ用SVGを保存できます。従来どおり、手元のSVG/SVGZを「開く」から読み込むこともできます。</p>
 
     <div class="helpNote">
       気象庁の実況天気図は観測時刻から公開まで時間差があります。選択した時刻のファイルがまだ公開されていない場合は、ひとつ前の時刻を選んでください。WebGLを利用できない端末では自動的にSVG互換描画へ切り替わります。
@@ -480,6 +464,11 @@ import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
 const PICK_TUBE_SCALE = 2.8;
 /* 学校版: パイプ半径をわかりやすく固定（太め） */
 const PIPE_RADIUS = 3.2;
+const HEIGHT_SCALE = 1;
+const DRAG_SENSITIVITY = 0.30;
+const SAMPLE_DENSITY = 240;
+const AXIS_LENGTH = 300;
+const AUTO_HEIGHT_WORLD_MAX = 225;
 
 /* ==== DOM refs ==== */
 const ui = {
@@ -514,15 +503,11 @@ const ui = {
   displayOpacityValue: document.getElementById('displayOpacityValue'),
   basisVisible: document.getElementById('basisVisible'),
   gridVisible: document.getElementById('gridVisible'),
-  heightScale: document.getElementById('heightScale'),
-  dragSensitivity: document.getElementById('dragSensitivity'),
-  sample: document.getElementById('sample'),
   imgVisible: document.getElementById('imgVisible'),
   imgOpacity: document.getElementById('imgOpacity'),
   imgHeight: document.getElementById('imgHeight'),
   autoMode: document.getElementById('autoMode'),
   gapFactor: document.getElementById('gapFactor'),
-  autoBlend: document.getElementById('autoBlend'),
   labelInfo: document.getElementById('labelInfo'),
   list: document.getElementById('list'),
 };
@@ -629,14 +614,7 @@ fontLoader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.
   };
   mk('X',0xff5f5f,{x:320,y:-20,z:0}); mk('Y',0x14b8a6,{x:0,y:320,z:0}); mk('Z',0x60a5fa,{x:0,y:-20,z:320});
 });
-const cube=new THREE.Mesh(new THREE.BoxGeometry(60,60,60),[
-  new THREE.MeshBasicMaterial({color:0xff5f5f}),
-  new THREE.MeshBasicMaterial({color:0xff5f5f}),
-  new THREE.MeshBasicMaterial({color:0x14b8a6}),
-  new THREE.MeshBasicMaterial({color:0x14b8a6}),
-  new THREE.MeshBasicMaterial({color:0x60a5fa}),
-  new THREE.MeshBasicMaterial({color:0x60a5fa}),
-]); cube.position.set(0,0,30); basis.add(cube); scene.add(basis);
+scene.add(basis);
 
 /* ==== containers ==== */
 const chartGroup=new THREE.Group(); scene.add(chartGroup);
@@ -646,6 +624,7 @@ let items=[];
 let weatherPlane=null, lastSvgDims=null, lastRawSvgText="";
 let linesOffset = new THREE.Vector3(0,0,0);
 let currentLinesGroup=null;
+let solidTerrainMesh=null;
 let hoveredItem=null;
 const HOVER_COLOR=new THREE.Color(0xff8a00);
 
@@ -908,27 +887,28 @@ function makeDisplayMeshes(it){
     return {pipeMesh,pickPipeMesh,geometryMode:'pipe'};
   }
 
-  if(mode==='solid' && it.isClosed){
-    const group=new THREE.Group();
-    const pickGroup=new THREE.Group();
-
-    const topGeom=buildTerraceTopGeometry(it);
-    const wallGeom=buildCurtainGeometry(points,true);
-
-    const top=new THREE.Mesh(topGeom,makeSurfaceMaterial(color));
-    top.name='terraceTop';
-    const side=new THREE.Mesh(wallGeom,makeSurfaceMaterial(color));
-    side.name='terraceWall';
-    group.add(top,side);
-
-    const pTop=new THREE.Mesh(topGeom.clone(),makePickMaterial());
-    pTop.name='terraceTop';
-    const pSide=new THREE.Mesh(wallGeom.clone(),makePickMaterial());
-    pSide.name='terraceWall';
-    pickGroup.add(pTop,pSide);
-    pickGroup.renderOrder=-1000;
-
-    return {pipeMesh:group,pickPipeMesh:pickGroup,geometryMode:'solid'};
+  if(mode==='solid'){
+    // 立体モードでは地形面を別の一枚メッシュで作り、等圧線自体は選択用の輪郭として残す。
+    if(rendererMode==='svg'){
+      const g=new THREE.BufferGeometry().setFromPoints(points);
+      const pipeMesh=new THREE.Line(
+        g,new THREE.LineBasicMaterial({color,transparent:true,opacity:Math.max(.55,displayOpacity())})
+      );
+      const pickPipeMesh=new THREE.Line(
+        g.clone(),new THREE.LineBasicMaterial({color:0x000000,transparent:true,opacity:0.001})
+      );
+      return {pipeMesh,pickPipeMesh,geometryMode:'solidContour'};
+    }
+    const pipeMesh=new THREE.Mesh(
+      buildTubeGeometry(points,PIPE_RADIUS*.55),
+      new THREE.MeshBasicMaterial({color,transparent:true,opacity:Math.max(.65,displayOpacity())})
+    );
+    const pickPipeMesh=new THREE.Mesh(
+      buildTubeGeometry(points,PIPE_RADIUS*PICK_TUBE_SCALE),
+      makePickMaterial()
+    );
+    pickPipeMesh.renderOrder=-1000;
+    return {pipeMesh,pickPipeMesh,geometryMode:'solidContour'};
   }
 
   // 壁モード、および立体モードで閉じていない等圧線。
@@ -985,7 +965,7 @@ function attachDisplayObjects(it,group){
 }
 
 function applyItemTransform(it){
-  const s=parseFloat(ui.heightScale.value);
+  const s=HEIGHT_SCALE;
   const z=it.height*s;
 
   if(it.hoverMesh){
@@ -1001,23 +981,11 @@ function applyItemTransform(it){
     return;
   }
 
-  if(it.geometryMode==='solid'){
-    const parentZ=it.parentContour ? it.parentContour.height*s : 0;
-    const low=Math.min(parentZ,z);
-    const dh=Math.max(Math.abs(z-parentZ),0.01);
-
-    for(const group of [it.pipeMesh,it.pickPipeMesh]){
-      const top=group.getObjectByName('terraceTop');
-      const wall=group.getObjectByName('terraceWall');
-      if(top){
-        top.position.set(0,0,z);
-        top.scale.set(1,1,1);
-      }
-      if(wall){
-        wall.position.set(0,0,low);
-        wall.scale.set(1,1,dh);
-      }
-    }
+  if(it.geometryMode==='solidContour'){
+    it.pipeMesh.position.set(0,0,z+0.8);
+    it.pickPipeMesh.position.set(0,0,z);
+    it.pipeMesh.scale.set(1,1,1);
+    it.pickPipeMesh.scale.set(1,1,1);
     return;
   }
 
@@ -1028,6 +996,120 @@ function applyItemTransform(it){
   it.pickPipeMesh.position.set(0,0,low);
   it.pipeMesh.scale.set(1,1,dh);
   it.pickPipeMesh.scale.set(1,1,dh);
+}
+
+function buildSteppedTerrainGeometry(){
+  if(items.length<2) return null;
+
+  const allPts=[];
+  for(const it of items){
+    for(const p of decimatePoints(it.pathPoints,50)) allPts.push(p);
+  }
+  if(allPts.length<4) return null;
+
+  const box=new THREE.Box3().setFromPoints(allPts);
+  const min=box.min,max=box.max;
+  const w=Math.max(1,max.x-min.x),h=Math.max(1,max.y-min.y);
+  const cols=rendererMode==='svg'?26:58;
+  const rows=Math.max(18,Math.round(cols*h/w));
+  const dx=w/cols,dy=h/rows;
+
+  const contourSamples=items.map(it=>({
+    item:it,
+    points:decimatePoints(it.pathPoints,rendererMode==='svg'?24:40)
+  }));
+
+  function nearestContourHeight(x,y){
+    let bestD=Infinity,bestH=0;
+    for(const cs of contourSamples){
+      let d2min=Infinity;
+      for(const p of cs.points){
+        const dxp=p.x-x,dyp=p.y-y;
+        const d2=dxp*dxp+dyp*dyp;
+        if(d2<d2min) d2min=d2;
+      }
+      if(d2min<bestD){bestD=d2min;bestH=cs.item.height*HEIGHT_SCALE;}
+    }
+    return bestH;
+  }
+
+  const heights=Array.from({length:rows},()=>Array(cols).fill(0));
+  for(let r=0;r<rows;r++){
+    for(let q=0;q<cols;q++){
+      heights[r][q]=nearestContourHeight(min.x+(q+.5)*dx,min.y+(r+.5)*dy);
+    }
+  }
+
+  const pos=[],col=[];
+  const maxH=currentMaxHeightStrict();
+  const addVertex=(x,y,z,color)=>{
+    pos.push(x,y,z);
+    col.push(color.r,color.g,color.b);
+  };
+  const addTri=(a,b,d,color)=>{
+    addVertex(...a,color);addVertex(...b,color);addVertex(...d,color);
+  };
+  const addQuad=(a,b,d,e,color)=>{
+    addTri(a,b,d,color);addTri(a,d,e,color);
+  };
+
+  for(let r=0;r<rows;r++){
+    for(let q=0;q<cols;q++){
+      const z=heights[r][q];
+      const localH=z/HEIGHT_SCALE;
+      const color=heightColorForValue(localH,maxH);
+      const x0=min.x+q*dx,x1=x0+dx,y0=min.y+r*dy,y1=y0+dy;
+      addQuad([x0,y0,z],[x1,y0,z],[x1,y1,z],[x0,y1,z],color);
+
+      // 右隣との段差面
+      if(q<cols-1){
+        const z2=heights[r][q+1];
+        if(Math.abs(z2-z)>.01){
+          const c2=heightColorForValue((Math.max(z,z2))/HEIGHT_SCALE,maxH);
+          addQuad([x1,y0,z],[x1,y0,z2],[x1,y1,z2],[x1,y1,z],c2);
+        }
+      }
+      // 上隣との段差面
+      if(r<rows-1){
+        const z2=heights[r+1][q];
+        if(Math.abs(z2-z)>.01){
+          const c2=heightColorForValue((Math.max(z,z2))/HEIGHT_SCALE,maxH);
+          addQuad([x0,y1,z],[x1,y1,z],[x1,y1,z2],[x0,y1,z2],c2);
+        }
+      }
+    }
+  }
+
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+  g.computeVertexNormals();
+  return g;
+}
+
+function rebuildSolidTerrain(){
+  if(solidTerrainMesh){
+    currentLinesGroup?.remove(solidTerrainMesh);
+    disposeObject(solidTerrainMesh);
+    solidTerrainMesh=null;
+  }
+  if(ui.displayMode.value!=='solid' || !currentLinesGroup || items.length<2) return;
+
+  const geometry=buildSteppedTerrainGeometry();
+  if(!geometry) return;
+  const opacity=displayOpacity();
+  const material=rendererMode==='webgl'
+    ? new THREE.MeshStandardMaterial({
+        vertexColors:true,transparent:opacity<.999,opacity,
+        side:THREE.DoubleSide,roughness:.82,metalness:0,flatShading:true,
+        polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1
+      })
+    : new THREE.MeshBasicMaterial({
+        vertexColors:true,transparent:opacity<.999,opacity,side:THREE.DoubleSide
+      });
+  solidTerrainMesh=new THREE.Mesh(geometry,material);
+  solidTerrainMesh.renderOrder=-2;
+  currentLinesGroup.add(solidTerrainMesh);
 }
 
 function applyItemAppearance(it){
@@ -1045,6 +1127,7 @@ function rebuildAllDisplayGeometry(){
     disposeObject(it.hoverMesh);
   }
   currentLinesGroup.clear();
+  solidTerrainMesh=null;
   for(const it of items) attachDisplayObjects(it,currentLinesGroup);
   updateHeightsAndColors();
 }
@@ -1135,10 +1218,10 @@ function applyImageUI(){
   if(!weatherPlane) return;
   weatherPlane.visible=ui.imgVisible.checked;
   if(rendererMode==='webgl') weatherPlane.material.opacity=parseFloat(ui.imgOpacity.value);
-  const s=parseFloat(ui.heightScale.value);
+  const s=HEIGHT_SCALE;
   weatherPlane.position.z=parseFloat(ui.imgHeight.value)*s;
 }
-['imgVisible','imgOpacity','imgHeight','heightScale'].forEach(id=>ui[id].addEventListener('input',applyImageUI));
+['imgVisible','imgOpacity','imgHeight'].forEach(id=>ui[id].addEventListener('input',applyImageUI));
 
 /* ==== SVG → items ==== */
 function centroidXY(pts){ let sx=0,sy=0; for(const p of pts){sx+=p.x;sy+=p.y;} const n=pts.length||1; return {x:sx/n,y:sy/n}; }
@@ -1151,7 +1234,7 @@ async function loadSVGFromString(svgText){
 
   const linesGroup=new THREE.Group();
   currentLinesGroup=linesGroup;
-  const sampleN=parseInt(ui.sample.value,10);
+  const sampleN=SAMPLE_DENSITY;
 
   for(const p of data.paths){
     for(const sub of p.subPaths){
@@ -1227,14 +1310,24 @@ async function assignPressuresFromLabelsOrAreas(){
 
 /* ==== auto / update ==== */
 function applyAutoHeights(){
-  const gf=parseFloat(ui.gapFactor.value);
-  const blend=parseFloat(ui.autoBlend.value);
-  const maxH=100*gf;
+  const spacing=Math.max(0.2,Math.min(1,parseFloat(ui.gapFactor.value)||0.82));
+  const worldScale=Math.max(0.0001,Math.abs(chartGroup.scale.z||1));
+  // chartGroupで拡大縮小された後も、最高点がZ軸矢印(300)より十分内側に収まる。
+  const maxLocalHeight=(AUTO_HEIGHT_WORLD_MAX/worldScale)*spacing;
   const withP=items.filter(it=>isFinite(it.pressure)).sort((a,b)=>a.pressure-b.pressure);
   const n=withP.length;
-  if(!n){ items.forEach(it=>it.height=0); updateHeightsAndColors(); return; }
-  withP.forEach((it,idx)=>{ const t=(n===1)?0:(idx/(n-1)); it.autoTarget=t*maxH; });
-  for(const it of items){ it.height=(it.autoTarget||0)*blend; }
+  if(!n){
+    items.forEach(it=>it.height=0);
+    updateHeightsAndColors();
+    return;
+  }
+  withP.forEach((it,idx)=>{
+    const t=(n===1)?0:idx/(n-1);
+    it.autoTarget=t*maxLocalHeight;
+    it.height=it.autoTarget;
+    if(it.ui?.slider) it.ui.slider.value=it.height;
+    if(it.ui?.num) it.ui.num.value=it.height.toFixed(2);
+  });
   updateHeightsAndColors();
 }
 function updateHeightsAndColors(){
@@ -1242,6 +1335,7 @@ function updateHeightsAndColors(){
     applyItemTransform(it);
     applyItemAppearance(it);
   }
+  rebuildSolidTerrain();
 }
 
 /* ==== パネル ==== */
@@ -1356,7 +1450,7 @@ ui.canvas.addEventListener('pointerdown',(e)=>{
 ui.canvas.addEventListener('pointermove',(e)=>{
   if(draggingItem){
     const dy = e.clientY - lastClientY; lastClientY = e.clientY;
-    let sens=parseFloat(ui.dragSensitivity.value);
+    let sens=DRAG_SENSITIVITY;
     if(e.shiftKey) sens*=.2; if(e.altKey) sens*=3.0;
     draggingItem.height += -dy * sens;
     if(draggingItem.ui?.slider) draggingItem.ui.slider.value=draggingItem.height;
@@ -1484,7 +1578,6 @@ function buildProjectSVG(){
     app:"3disobarsplus",
     savedAt: new Date().toISOString(),
     autoMode: ui.autoMode.checked,
-    heightScale: parseFloat(ui.heightScale.value),
     displayMode: ui.displayMode.value,
     displayHue: parseFloat(ui.displayHue.value),
     displayOpacity: parseFloat(ui.displayOpacity.value)
@@ -1506,51 +1599,33 @@ function doExportSTL(){
   const exporter=new STLExporter();
   const group=new THREE.Group();
   const mode=ui.displayMode.value;
-  const s=parseFloat(ui.heightScale.value);
 
-  computeContourHierarchy();
-
-  for(const it of items){
-    if(!(it.ui?.vis?.checked ?? true)) continue;
-
-    if(mode==='pipe'){
-      const mesh=new THREE.Mesh(
-        buildTubeGeometry(it.pathPoints,PIPE_RADIUS),
-        new THREE.MeshBasicMaterial({color:heightColorForItem(it)})
-      );
-      mesh.position.z=it.height*s;
-      group.add(mesh);
-      continue;
+  if(mode==='solid'){
+    const geometry=buildSteppedTerrainGeometry();
+    if(geometry){
+      group.add(new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.DoubleSide})));
     }
-
-    if(mode==='solid' && it.isClosed){
-      const z=it.height*s;
-      const parentZ=it.parentContour?it.parentContour.height*s:0;
-      const top=new THREE.Mesh(
-        buildTerraceTopGeometry(it),
-        new THREE.MeshBasicMaterial({color:heightColorForItem(it),side:THREE.DoubleSide})
-      );
-      top.position.z=z;
-      group.add(top);
-
-      const side=new THREE.Mesh(
-        buildCurtainGeometry(it.pathPoints,true),
-        new THREE.MeshBasicMaterial({color:heightColorForItem(it),side:THREE.DoubleSide})
-      );
-      side.position.z=Math.min(parentZ,z);
-      side.scale.z=Math.max(Math.abs(z-parentZ),0.01);
-      group.add(side);
-      continue;
+  }else{
+    for(const it of items){
+      if(!(it.ui?.vis?.checked ?? true)) continue;
+      if(mode==='pipe'){
+        const mesh=new THREE.Mesh(
+          buildTubeGeometry(it.pathPoints,PIPE_RADIUS),
+          new THREE.MeshBasicMaterial({color:heightColorForItem(it)})
+        );
+        mesh.position.z=it.height*HEIGHT_SCALE;
+        group.add(mesh);
+      }else{
+        const wall=new THREE.Mesh(
+          buildWallGeometry(it.pathPoints,PIPE_RADIUS),
+          new THREE.MeshBasicMaterial({color:heightColorForItem(it),side:THREE.DoubleSide})
+        );
+        const z=it.height*HEIGHT_SCALE;
+        wall.position.z=Math.min(0,z);
+        wall.scale.z=Math.max(Math.abs(z),0.01);
+        group.add(wall);
+      }
     }
-
-    const wall=new THREE.Mesh(
-      buildWallGeometry(it.pathPoints,PIPE_RADIUS),
-      new THREE.MeshBasicMaterial({color:heightColorForItem(it),side:THREE.DoubleSide})
-    );
-    const z=it.height*s;
-    wall.position.z=Math.min(0,z);
-    wall.scale.z=Math.max(Math.abs(z),0.01);
-    group.add(wall);
   }
 
   const stl=exporter.parse(group);
@@ -2012,7 +2087,6 @@ ui.bgColor.addEventListener('input',e=>{
 });
 ui.basisVisible.addEventListener('change', e=>{ basis.visible=e.target.checked; });
 ui.gridVisible.addEventListener('change', e=>{ const v=e.target.checked; gridXY.visible=v; gridZX.visible=v; });
-ui.heightScale.addEventListener('input', ()=>{ updateHeightsAndColors(); applyImageUI(); });
 ui.viewSelect.addEventListener('change', e=>{ const v=e.target.value; if(v==='top') viewTop(); else if(v==='front') viewFront(); else if(v==='side') viewSide(); else fitView(chartGroup); });
 ui.projection.addEventListener('change', e=>{ (e.target.value==='ortho')?useOrthographic():usePerspective(); fitView(chartGroup); });
 ui.panelToggle.addEventListener('click',()=>{
@@ -2027,7 +2101,6 @@ ui.autoMode.addEventListener('change', ()=>{
   else { for(const it of items){ it.height=0; if(it.ui?.slider) it.ui.slider.value=0; if(it.ui?.num) it.ui.num.value='0.00'; } updateHeightsAndColors(); }
 });
 ui.gapFactor.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); });
-ui.autoBlend.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); });
 
 /* 初期可視 */
 basis.visible=true; gridXY.visible=true; gridZX.visible=true;
