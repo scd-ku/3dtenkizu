@@ -1311,6 +1311,10 @@ function safeDifference(a,b){
   if(!Array.isArray(b)||!b.length) return a;
   try{return polygonClipping.difference(a,b);}catch(err){console.warn('polygon difference failed',err);return a;}
 }
+function safeIntersection(a,b){
+  if(!Array.isArray(a)||!a.length||!Array.isArray(b)||!b.length) return [];
+  try{return polygonClipping.intersection(a,b);}catch(err){console.warn('polygon intersection failed',err);return [];}
+}
 function highSideMultiPolygon(it,bounds){
   const rect=rectangleMultiPolygon(bounds);
   const center=it.pressureCenter||null;
@@ -1408,13 +1412,15 @@ function buildExactContourTerrain(){
   // 各気圧レベルの「その値以上の領域」を等圧線から作る。
   let regions=levels.map(level=>{
     const pieces=level.items.map(it=>highSideMultiPolygon(it,bounds)).filter(x=>x.length);
-    return safeUnion(...pieces);
+    const merged=safeUnion(...pieces);
+    return safeIntersection(merged,rect);
   });
 
-  // 高いレベルの領域は、必ず低いレベルの領域に含まれるよう補正。
-  // これにより巨大な板の重なりではなく、入れ子状のコンター模型になる。
-  for(let i=regions.length-2;i>=0;i--){
-    regions[i]=safeUnion(regions[i],regions[i+1]);
+  // 「この気圧以上の領域」は、気圧が高くなるほど必ず小さくなる。
+  // 高い段を低い段へ足すのではなく、高い段を直下の段の内側へ切り詰める。
+  // これがコンター模型の段を重ならない面にする重要な処理。
+  for(let i=1;i<regions.length;i++){
+    regions[i]=safeIntersection(regions[i],regions[i-1]);
   }
 
   // 最低レベルよりさらに低い部分は天気図矩形の基底面。
@@ -1424,6 +1430,8 @@ function buildExactContourTerrain(){
     heightColorForValue(minHeight/HEIGHT_SCALE,maxH),
     minHeight
   );
+
+  console.info('solid terrain levels:',levels.length,'regions:',regions.map(r=>r.length));
 
   // 各段は「現在レベル領域 − 次の高いレベル領域」だけを描く。
   // 面同士が重ならず、境界は元の等圧線になる。
@@ -1790,6 +1798,14 @@ function assignSymbolAwarePressure(){
 async function assignPressuresFromLabelsOrAreas(){
   const centers=readPressureCenters(lastRawSvgText);
   const labs=readPressureLabels(lastRawSvgText);
+
+  // H/L/TD/TY が読める天気図では、それを優先する。
+  // 近傍の数字を等圧線ラベルと誤認して高低が逆転するのを防ぐ。
+  if(centers.length){
+    assignSymbolAwarePressure();
+    return;
+  }
+
   if(labs.length){
     for(const it of items){
       const x=it.centroid.x,y=it.centroid.y;
@@ -1800,20 +1816,14 @@ async function assignPressuresFromLabelsOrAreas(){
       }
       it.pressure=best?best.value:undefined;
       it.pressureSource='気圧値ラベル';
-
-      let strongest=null,strongestInfluence=-Infinity;
-      for(const center of centers){
-        const d=Math.sqrt(pointToPolylineDistance2(center,it.pathPoints))+18;
-        const influence=1/d;
-        if(influence>strongestInfluence){strongestInfluence=influence;strongest=center;}
-      }
-      it.pressureCenter=strongest;
-      it.pressureSign=strongest?.sign||0;
+      it.pressureCenter=null;
+      it.pressureSign=0;
     }
     ui.labelInfo.textContent='気圧値ラベル: '+labs.length+'個';
-  }else{
-    assignSymbolAwarePressure();
+    return;
   }
+
+  assignSymbolAwarePressure();
 }
 
 /* ==== auto / update ==== */
