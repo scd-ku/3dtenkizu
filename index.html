@@ -382,7 +382,7 @@
         <input id="solidContourVisible" type="checkbox" checked title="立体モードで等圧線を表示">
       </div>
       <div class="muted" style="margin:.15rem 0 .65rem">
-        色は高さに応じて赤→青へ変化します。色相補正で全体の色味を調整できます。<br>壁：パイプと同じ幅の壁面　／　立体：隣り合う閉じた等圧線の間を段状の面でつなぎます
+        色は高さに応じて赤→青へ変化します。色相補正で全体の色味を調整できます。<br>壁：パイプと同じ幅の壁面　／　立体：閉じた等圧線も開いた等圧線も、天気図外枠と合わせて領域化し、等圧線の高さで段状の面を張ります
       </div>
     </div>
 
@@ -456,6 +456,7 @@ import * as pako from 'https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.esm.mjs
 import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
 import * as polygonClippingModule from 'https://cdn.jsdelivr.net/npm/polygon-clipping@0.15.7/+esm';
+import * as turf from 'https://cdn.jsdelivr.net/npm/@turf/turf@7.2.0/+esm';
 const polygonClipping=polygonClippingModule.default||polygonClippingModule;
 
 const PICK_TUBE_SCALE = 2.8;
@@ -1386,6 +1387,81 @@ function addMultiPolygonSurface(group,mp,color,z){
     addTerrainMesh(group,geom,color,z);
   }
 }
+function pointInRingXY(point,ring){
+  let inside=false;
+  for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+    const xi=ring[i][0],yi=ring[i][1],xj=ring[j][0],yj=ring[j][1];
+    const cross=((yi>point.y)!==(yj>point.y)) &&
+      (point.x<(xj-xi)*(point.y-yi)/((yj-yi)||1e-12)+xi);
+    if(cross) inside=!inside;
+  }
+  return inside;
+}
+function pointInMultiPolygonXY(point,mp){
+  for(const poly of (mp||[])){
+    if(!poly?.length) continue;
+    if(!pointInRingXY(point,poly[0])) continue;
+    let inHole=false;
+    for(let i=1;i<poly.length;i++){
+      if(pointInRingXY(point,poly[i])){inHole=true;break;}
+    }
+    if(!inHole) return true;
+  }
+  return false;
+}
+function contourLineForPolygonize(it,bounds){
+  let pts=decimatePoints(it.pathPoints,220).map(p=>[p.x,p.y]);
+  if(pts.length<2) return null;
+
+  if(it.isClosed){
+    const first=pts[0],last=pts[pts.length-1];
+    if(Math.hypot(first[0]-last[0],first[1]-last[1])>1e-6){
+      pts.push([first[0],first[1]]);
+    }
+    return pts;
+  }
+
+  // 開いている等圧線は、両端を必ず天気図外枠の最寄点まで延長する。
+  // その外枠と他の等圧線を合わせて polygonize することで面を閉じる。
+  const firstV=new THREE.Vector3(pts[0][0],pts[0][1],0);
+  const lastV=new THREE.Vector3(pts[pts.length-1][0],pts[pts.length-1][1],0);
+  const a=boundarySnap(firstV,bounds).p;
+  const b=boundarySnap(lastV,bounds).p;
+
+  const out=[[a.x,a.y],...pts,[b.x,b.y]];
+  // 連続する同一点を除く。
+  return out.filter((p,i,arr)=>i===0||Math.hypot(p[0]-arr[i-1][0],p[1]-arr[i-1][1])>1e-7);
+}
+function turfPolygonToShapeGeometry(feature){
+  const coords=feature?.geometry?.coordinates;
+  if(!coords?.length) return null;
+
+  const outer=coords[0];
+  if(!outer||outer.length<4) return null;
+  let op=outer.slice(0,-1).map(p=>new THREE.Vector2(p[0],p[1]));
+  if(op.length<3) return null;
+  if(!THREE.ShapeUtils.isClockWise(op)) op=op.reverse();
+
+  const shape=new THREE.Shape();
+  shape.moveTo(op[0].x,op[0].y);
+  for(let i=1;i<op.length;i++) shape.lineTo(op[i].x,op[i].y);
+  shape.closePath();
+
+  for(let r=1;r<coords.length;r++){
+    let hp=coords[r].slice(0,-1).map(p=>new THREE.Vector2(p[0],p[1]));
+    if(hp.length<3) continue;
+    if(THREE.ShapeUtils.isClockWise(hp)) hp=hp.reverse();
+    const hole=new THREE.Path();
+    hole.moveTo(hp[0].x,hp[0].y);
+    for(let i=1;i<hp.length;i++) hole.lineTo(hp[i].x,hp[i].y);
+    hole.closePath();
+    shape.holes.push(hole);
+  }
+
+  const g=new THREE.ShapeGeometry(shape);
+  g.computeVertexNormals();
+  return g;
+}
 function buildExactContourTerrain(){
   const group=new THREE.Group();
   const visibleItems=items.filter(it=>it.ui?.vis?.checked??true);
@@ -1393,71 +1469,91 @@ function buildExactContourTerrain(){
 
   const canvasW=lastSvgDims?.w||1000;
   const canvasH=lastSvgDims?.h||1000;
-  // 外郭は必ず天気図そのものの矩形内。
   const bounds={minX:0,minY:-canvasH,maxX:canvasW,maxY:0};
-  const rect=rectangleMultiPolygon(bounds);
-
   const maxH=currentMaxHeightStrict();
   const minHeight=Math.min(0,...visibleItems.map(it=>it.height*HEIGHT_SCALE));
 
-  // 同じ高さの等圧線は同一の気圧レベルとしてまとめる。
-  const levelMap=new Map();
+  // 各等圧線について「その線より高い側」をあらかじめ求める。
+  const sideRegions=visibleItems.map(it=>({
+    it,
+    region:highSideMultiPolygon(it,bounds)
+  }));
+
+  // 天気図の矩形外枠と全等圧線を一つの線網にする。
+  const lineFeatures=[];
+  lineFeatures.push(turf.lineString([
+    [bounds.minX,bounds.minY],
+    [bounds.maxX,bounds.minY],
+    [bounds.maxX,bounds.maxY],
+    [bounds.minX,bounds.maxY],
+    [bounds.minX,bounds.minY]
+  ],{kind:'frame'}));
+
   for(const it of visibleItems){
-    const key=(Math.round(it.height*1000)/1000).toFixed(3);
-    if(!levelMap.has(key)) levelMap.set(key,{height:it.height,items:[]});
-    levelMap.get(key).items.push(it);
-  }
-  const levels=[...levelMap.values()].sort((a,b)=>a.height-b.height);
-
-  // 各気圧レベルの「その値以上の領域」を等圧線から作る。
-  let regions=levels.map(level=>{
-    const pieces=level.items.map(it=>highSideMultiPolygon(it,bounds)).filter(x=>x.length);
-    const merged=safeUnion(...pieces);
-    return safeIntersection(merged,rect);
-  });
-
-  // 「この気圧以上の領域」は、気圧が高くなるほど必ず小さくなる。
-  // 高い段を低い段へ足すのではなく、高い段を直下の段の内側へ切り詰める。
-  // これがコンター模型の段を重ならない面にする重要な処理。
-  for(let i=1;i<regions.length;i++){
-    regions[i]=safeIntersection(regions[i],regions[i-1]);
+    const coords=contourLineForPolygonize(it,bounds);
+    if(!coords||coords.length<2) continue;
+    try{
+      lineFeatures.push(turf.lineString(coords,{kind:'isobar'}));
+    }catch(err){
+      console.warn('contour line creation failed',err);
+    }
   }
 
-  // 最低レベルよりさらに低い部分は天気図矩形の基底面。
-  const outsideLowest=regions.length?safeDifference(rect,regions[0]):rect;
-  addMultiPolygonSurface(
-    group,outsideLowest,
-    heightColorForValue(minHeight/HEIGHT_SCALE,maxH),
-    minHeight
-  );
+  let cells;
+  try{
+    cells=turf.polygonize(turf.featureCollection(lineFeatures));
+  }catch(err){
+    console.error('terrain polygonize failed',err);
+    return group;
+  }
 
-  console.info('solid terrain levels:',levels.length,'regions:',regions.map(r=>r.length));
+  // polygonize で得た各面に、その位置で成立する最も高い等圧線レベルを割り当てる。
+  // これにより水平面の境界は必ず元の等圧線になる。
+  const cellInfos=[];
+  for(const feature of (cells.features||[])){
+    let sample;
+    try{
+      const pf=turf.pointOnFeature(feature);
+      sample={x:pf.geometry.coordinates[0],y:pf.geometry.coordinates[1]};
+    }catch{
+      const ring=feature.geometry?.coordinates?.[0]||[];
+      if(!ring.length) continue;
+      sample={x:ring[0][0],y:ring[0][1]};
+    }
 
-  // 各段は「現在レベル領域 − 次の高いレベル領域」だけを描く。
-  // 面同士が重ならず、境界は元の等圧線になる。
-  for(let i=0;i<levels.length;i++){
-    const current=regions[i]||[];
-    const higher=i<levels.length-1?(regions[i+1]||[]):[];
-    const band=higher.length?safeDifference(current,higher):current;
-    const z=levels[i].height*HEIGHT_SCALE;
-    addMultiPolygonSurface(
-      group,band,
-      heightColorForValue(levels[i].height,maxH),
-      z
+    let h=minHeight/HEIGHT_SCALE;
+    for(const entry of sideRegions){
+      if(entry.region?.length && pointInMultiPolygonXY(sample,entry.region)){
+        h=Math.max(h,entry.it.height);
+      }
+    }
+
+    const geom=turfPolygonToShapeGeometry(feature);
+    if(!geom) continue;
+    cellInfos.push({feature,height:h,geom});
+  }
+
+  for(const cell of cellInfos){
+    addTerrainMesh(
+      group,
+      cell.geom,
+      heightColorForValue(cell.height,maxH),
+      cell.height*HEIGHT_SCALE
     );
   }
 
-  // 垂直な段差壁はパイプ表示と同じ等圧線そのものを使う。
-  const distinctHeights=levels.map(x=>x.height);
+  // 段差の垂直面はパイプ表示と同じ等圧線そのものを使う。
+  const levels=[...new Set(visibleItems.map(it=>it.height))].sort((a,b)=>a-b);
   for(const it of visibleItems){
     const z=it.height*HEIGHT_SCALE;
     let lower=minHeight;
-    for(const h of distinctHeights){
+    for(const h of levels){
       if(h<it.height-1e-6) lower=Math.max(lower,h*HEIGHT_SCALE);
       else break;
     }
     const dz=z-lower;
     if(Math.abs(dz)<.01) continue;
+
     addTerrainMesh(
       group,
       buildCurtainGeometry(it.pathPoints,it.isClosed),
@@ -1467,6 +1563,7 @@ function buildExactContourTerrain(){
     );
   }
 
+  console.info('solid terrain polygonized cells:',cellInfos.length);
   return group;
 }
 
