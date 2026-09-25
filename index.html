@@ -127,6 +127,11 @@
     display:flex;align-items:center;gap:.45rem;color:#2563a8
   }
   .sectionIcon{width:18px;height:18px;flex:0 0 auto;color:#3978ad}
+  .section.collapsible>h2{cursor:pointer;user-select:none;padding:.28rem .15rem;border-radius:.45rem}
+  .section.collapsible>h2:hover{background:#f1f5f9}
+  .section.collapsible>h2::after{content:"▾";margin-left:auto;color:#64748b;font-size:12px;transition:transform .15s ease}
+  .section.collapsible.collapsed>h2::after{transform:rotate(-90deg)}
+  .section.collapsible.collapsed>:not(h2){display:none}
 
   .row{display:grid;grid-template-columns:1fr auto;gap:.7rem;align-items:center;margin:.5rem 0}
   .row label{font-size:13px;color:var(--muted)}
@@ -320,8 +325,8 @@
   </div>
 
   <aside id="sidebar">
-    <div class="section">
-      <h2>
+    <div class="section collapsible" data-section="overall">
+      <h2 role="button" tabindex="0" aria-expanded="true">
         <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
             <path d="M4 6h10M18 6h2M4 12h3M11 12h9M4 18h8M16 18h4"></path>
@@ -339,8 +344,8 @@
       <div class="row"><span class="muted" id="labelInfo">ラベル未解析</span><span></span></div>
     </div>
 
-    <div class="section">
-      <h2>
+    <div class="section collapsible" data-section="display">
+      <h2 role="button" tabindex="0" aria-expanded="true">
         <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 18h16M5 14l4-3 3 2 4-5 3 2"></path>
@@ -2145,6 +2150,19 @@ addEventListener('keydown',e=>{
   if(e.key==='Escape') document.querySelectorAll('.modalShade.open').forEach(m=>m.classList.remove('open'));
 });
 
+/* ==== 個別設定パネルの開閉 ==== */
+document.querySelectorAll('.section.collapsible>h2').forEach(head=>{
+  const toggle=()=>{
+    const section=head.parentElement;
+    const collapsed=section.classList.toggle('collapsed');
+    head.setAttribute('aria-expanded',collapsed?'false':'true');
+  };
+  head.addEventListener('click',toggle);
+  head.addEventListener('keydown',e=>{
+    if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle();}
+  });
+});
+
 /* ==== 表示スタイル ==== */
 function updateStyleControlLabels(){
   const hue=parseFloat(ui.displayHue.value)||0;
@@ -2155,11 +2173,23 @@ function updateStyleControlLabels(){
   ui.displayColorPreview.style.background=`#${preview.getHexString()}`;
 }
 ui.displayMode.addEventListener('change',()=>{
+  const savedPos=camera.position.clone();
+  const savedQuat=camera.quaternion.clone();
+  const savedTarget=controls.target.clone();
+  const savedZoom=camera.zoom;
+
   if(hoveredItem?.hoverMesh) hoveredItem.hoverMesh.visible=false;
   hoveredItem=null;
   ui.dragHud.style.display='none';
   rebuildAllDisplayGeometry();
-  fitView(chartGroup);
+
+  camera.position.copy(savedPos);
+  camera.quaternion.copy(savedQuat);
+  camera.zoom=savedZoom;
+  camera.updateProjectionMatrix();
+  _target.copy(savedTarget);
+  controls.target.copy(savedTarget);
+  controls.update();
 });
 ui.displayHue.addEventListener('input',()=>{
   updateStyleControlLabels();
