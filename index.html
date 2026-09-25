@@ -1103,106 +1103,235 @@ function buildBasePlateGeometry(bounds,rootClosed){
   return g;
 }
 
-function chooseOpenContourPairs(openItems,bounds){
-  if(openItems.length<2) return [];
+function boundarySnap(point,bounds){
+  const dTop=Math.abs(point.y-bounds.maxY);
+  const dRight=Math.abs(point.x-bounds.maxX);
+  const dBottom=Math.abs(point.y-bounds.minY);
+  const dLeft=Math.abs(point.x-bounds.minX);
+  const ds=[
+    {side:'top',d:dTop,p:new THREE.Vector3(THREE.MathUtils.clamp(point.x,bounds.minX,bounds.maxX),bounds.maxY,0)},
+    {side:'right',d:dRight,p:new THREE.Vector3(bounds.maxX,THREE.MathUtils.clamp(point.y,bounds.minY,bounds.maxY),0)},
+    {side:'bottom',d:dBottom,p:new THREE.Vector3(THREE.MathUtils.clamp(point.x,bounds.minX,bounds.maxX),bounds.minY,0)},
+    {side:'left',d:dLeft,p:new THREE.Vector3(bounds.minX,THREE.MathUtils.clamp(point.y,bounds.minY,bounds.maxY),0)}
+  ].sort((a,b)=>a.d-b.d);
+  const best=ds[0];
+  const w=bounds.maxX-bounds.minX,h=bounds.maxY-bounds.minY;
+  if(best.side==='top') best.t=best.p.x-bounds.minX;
+  else if(best.side==='right') best.t=w+(bounds.maxY-best.p.y);
+  else if(best.side==='bottom') best.t=w+h+(bounds.maxX-best.p.x);
+  else best.t=2*w+h+(best.p.y-bounds.minY);
+  return best;
+}
+function perimeterPoint(t,bounds){
+  const w=bounds.maxX-bounds.minX,h=bounds.maxY-bounds.minY;
+  const P=2*(w+h);
+  t=((t%P)+P)%P;
+  if(t<=w) return new THREE.Vector3(bounds.minX+t,bounds.maxY,0);
+  if(t<=w+h) return new THREE.Vector3(bounds.maxX,bounds.maxY-(t-w),0);
+  if(t<=2*w+h) return new THREE.Vector3(bounds.maxX-(t-w-h),bounds.minY,0);
+  return new THREE.Vector3(bounds.minX,bounds.minY+(t-2*w-h),0);
+}
+function perimeterPathClockwise(fromSnap,toSnap,bounds){
+  const w=bounds.maxX-bounds.minX,h=bounds.maxY-bounds.minY;
+  const P=2*(w+h);
+  let a=fromSnap.t,b=toSnap.t;
+  if(b<a) b+=P;
+  const cuts=[w,w+h,2*w+h,P,2*w+h+P,w+P,w+h+P];
+  const pts=[fromSnap.p.clone()];
+  for(const t of cuts.sort((x,y)=>x-y)){
+    if(t>a+1e-6&&t<b-1e-6) pts.push(perimeterPoint(t,bounds));
+  }
+  pts.push(toSnap.p.clone());
+  return pts;
+}
+function polygonAreaAbs(points){
+  let a=0;
+  for(let i=0;i<points.length;i++){
+    const p=points[i],q=points[(i+1)%points.length];
+    a+=p.x*q.y-q.x*p.y;
+  }
+  return Math.abs(a)*.5;
+}
+function polygonCenter2D(points){
+  let x=0,y=0;
+  for(const p of points){x+=p.x;y+=p.y;}
+  const n=points.length||1;
+  return new THREE.Vector2(x/n,y/n);
+}
+function buildShapeGeometryFromPolygon(points){
+  if(points.length<3) return new THREE.BufferGeometry();
+  let pts=points.map(p=>new THREE.Vector2(p.x,p.y));
+  if(!THREE.ShapeUtils.isClockWise(pts)) pts=pts.reverse();
+  const shape=new THREE.Shape();
+  shape.moveTo(pts[0].x,pts[0].y);
+  for(let i=1;i<pts.length;i++) shape.lineTo(pts[i].x,pts[i].y);
+  shape.closePath();
+  const g=new THREE.ShapeGeometry(shape);
+  g.computeVertexNormals();
+  return g;
+}
+function boundaryClosureCandidates(it,bounds){
+  const pts=normalizedContourPoints(it.pathPoints,180);
+  if(pts.length<2) return [];
   const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
-  const meta=openItems.map(it=>({it,box:contourBounds2D(it.pathPoints)}));
-  const pairs=[];
-  const used=new Set();
+  const a=boundarySnap(pts[0],bounds),b=boundarySnap(pts[pts.length-1],bounds);
+  if(a.d>diag*.075||b.d>diag*.075) return [];
 
-  for(const a of meta){
-    let best=null,bestScore=Infinity;
-    for(const b of meta){
-      if(a===b) continue;
-      if(Math.abs(a.it.height-b.it.height)<1e-6) continue;
-      const key=[items.indexOf(a.it),items.indexOf(b.it)].sort((x,y)=>x-y).join(':');
-      if(used.has(key)) continue;
+  const cw=perimeterPathClockwise(b,a,bounds);
+  const ccw=perimeterPathClockwise(a,b,bounds).reverse();
+  const core=pts.map(p=>p.clone());
 
-      const bd=bboxDistance2D(a.box,b.box);
-      const cd=Math.hypot(a.box.cx-b.box.cx,a.box.cy-b.box.cy);
-      const score=bd+cd*.18;
-      if(score<bestScore){bestScore=score;best={b,key};}
+  const make=(edge)=>{
+    const poly=core.slice();
+    if(poly[poly.length-1].distanceTo(edge[0])>1e-6) poly.push(edge[0].clone());
+    for(let i=1;i<edge.length;i++) poly.push(edge[i].clone());
+    if(poly[poly.length-1].distanceTo(poly[0])>1e-6) poly.push(poly[0].clone());
+    return {points:poly,area:polygonAreaAbs(poly),center:polygonCenter2D(poly)};
+  };
+  return [make(cw),make(ccw)];
+}
+function openBoundaryMeta(it,bounds){
+  const pts=normalizedContourPoints(it.pathPoints,120);
+  if(pts.length<2) return null;
+  const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
+  const a=boundarySnap(pts[0],bounds),b=boundarySnap(pts[pts.length-1],bounds);
+  if(a.d>diag*.075||b.d>diag*.075) return null;
+  const sides=[a.side,b.side].sort();
+  const box=contourBounds2D(it.pathPoints);
+  return {it,a,b,signature:sides.join('-'),box};
+}
+function sortOpenGroup(meta){
+  const sig=meta[0]?.signature||'';
+  if(sig==='bottom-top') return meta.sort((a,b)=>a.box.cx-b.box.cx);
+  if(sig==='left-right') return meta.sort((a,b)=>a.box.cy-b.box.cy);
+  return meta.sort((a,b)=>(a.box.cx+a.box.cy)-(b.box.cx+b.box.cy));
+}
+function chooseCapOutsideNeighbor(it,neighbor,bounds){
+  const candidates=boundaryClosureCandidates(it,bounds);
+  if(!candidates.length) return null;
+  if(!neighbor) return candidates.sort((a,b)=>a.area-b.area)[0];
+  const ncenter=contourCenter(neighbor.pathPoints);
+  const outside=candidates.filter(c=>!pointInPolygon2D(ncenter,c.points));
+  if(outside.length) return outside.sort((a,b)=>a.area-b.area)[0];
+  return candidates.sort((a,b)=>a.area-b.area)[0];
+}
+function addOpenContourTerrain(group,openItems,bounds,minHeight,maxH){
+  const metas=openItems.map(it=>openBoundaryMeta(it,bounds));
+  const boundaryMetas=metas.filter(Boolean);
+  const internal=openItems.filter((it,i)=>!metas[i]);
+
+  const groups=new Map();
+  for(const m of boundaryMetas){
+    if(!groups.has(m.signature)) groups.set(m.signature,[]);
+    groups.get(m.signature).push(m);
+  }
+
+  for(const arr0 of groups.values()){
+    const arr=sortOpenGroup(arr0);
+    // 隣り合う開いた等圧線の間を面で埋める。
+    for(let i=0;i<arr.length-1;i++){
+      const a=arr[i].it,b=arr[i+1].it;
+      const low=a.height<=b.height?a:b;
+      const high=low===a?b:a;
+      const zLow=low.height*HEIGHT_SCALE;
+      const zHigh=high.height*HEIGHT_SCALE;
+      addTerrainMesh(group,buildBandBetweenContours(a,b,zLow),heightColorForItem(low),0);
+      const dz=zHigh-zLow;
+      if(Math.abs(dz)>.01){
+        addTerrainMesh(
+          group,buildCurtainGeometry(high.pathPoints,false),heightColorForItem(high),
+          Math.min(zLow,zHigh),Math.abs(dz)
+        );
+      }
     }
-    if(best && bestScore<diag*.22){
-      used.add(best.key);
-      pairs.push([a.it,best.b.it]);
+
+    // 一番外側の開いた等圧線から地図外枠までの領域も面にする。
+    if(arr.length){
+      const first=arr[0].it,last=arr[arr.length-1].it;
+      const firstCap=chooseCapOutsideNeighbor(first,arr[1]?.it||null,bounds);
+      const lastCap=arr.length>1?chooseCapOutsideNeighbor(last,arr[arr.length-2]?.it||null,bounds):null;
+
+      if(firstCap){
+        addTerrainMesh(
+          group,buildShapeGeometryFromPolygon(firstCap.points),
+          heightColorForItem(first),first.height*HEIGHT_SCALE
+        );
+      }
+      if(lastCap && last!==first){
+        addTerrainMesh(
+          group,buildShapeGeometryFromPolygon(lastCap.points),
+          heightColorForItem(last),last.height*HEIGHT_SCALE
+        );
+      }
     }
   }
-  return pairs;
-}
 
+  // 地図外枠に届かない開放線は、空間的に最も近い別の開放線とだけ接続する。
+  const used=new Set();
+  for(const a of internal){
+    let best=null,bestD=Infinity;
+    const ab=contourBounds2D(a.pathPoints);
+    for(const b of internal){
+      if(a===b) continue;
+      const key=[items.indexOf(a),items.indexOf(b)].sort((x,y)=>x-y).join(':');
+      if(used.has(key)) continue;
+      const d=bboxDistance2D(ab,contourBounds2D(b.pathPoints));
+      if(d<bestD){bestD=d;best={b,key};}
+    }
+    const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
+    if(best&&bestD<diag*.08){
+      used.add(best.key);
+      const b=best.b;
+      const low=a.height<=b.height?a:b;
+      const high=low===a?b:a;
+      const zLow=low.height*HEIGHT_SCALE,zHigh=high.height*HEIGHT_SCALE;
+      addTerrainMesh(group,buildBandBetweenContours(a,b,zLow),heightColorForItem(low),0);
+      if(Math.abs(zHigh-zLow)>.01){
+        addTerrainMesh(
+          group,buildCurtainGeometry(high.pathPoints,false),heightColorForItem(high),
+          Math.min(zLow,zHigh),Math.abs(zHigh-zLow)
+        );
+      }
+    }
+  }
+}
 function buildExactContourTerrain(){
   const group=new THREE.Group();
   if(items.length<2) return group;
 
   computeContourHierarchy();
 
-  const allPts=[];
-  for(const it of items) for(const p of decimatePoints(it.pathPoints,60)) allPts.push(p);
-  const b3=new THREE.Box3().setFromPoints(allPts);
-  const bounds={minX:b3.min.x,minY:b3.min.y,maxX:b3.max.x,maxY:b3.max.y};
+  const canvasW=lastSvgDims?.w||1000;
+  const canvasH=lastSvgDims?.h||1000;
+  const bounds={minX:0,minY:-canvasH,maxX:canvasW,maxY:0};
 
   const visibleItems=items.filter(it=>it.ui?.vis?.checked ?? true);
   const minHeight=Math.min(0,...visibleItems.map(it=>it.height*HEIGHT_SCALE));
   const maxH=currentMaxHeightStrict();
 
-  // 最下段の基底面。閉じた最外周の内部は穴にし、その内部は各等圧線の段で埋める。
-  const roots=visibleItems.filter(it=>it.isClosed && !it.parentContour);
+  const roots=visibleItems.filter(it=>it.isClosed&&!it.parentContour);
   addTerrainMesh(
-    group,
-    buildBasePlateGeometry(bounds,roots),
-    heightColorForValue(minHeight/HEIGHT_SCALE,maxH),
-    minHeight
+    group,buildBasePlateGeometry(bounds,roots),
+    heightColorForValue(minHeight/HEIGHT_SCALE,maxH),minHeight
   );
 
-  // 閉じた等圧線：線そのものを境界に、水平な段面と垂直な段差面を生成。
+  // 閉じた等圧線は従来どおり、線そのものを水平面と段差面の境界に使う。
   const closed=visibleItems.filter(it=>it.isClosed).sort((a,b)=>b.area-a.area);
   for(const it of closed){
     const z=it.height*HEIGHT_SCALE;
-    const parentZ=it.parentContour ? it.parentContour.height*HEIGHT_SCALE : minHeight;
-
+    const parentZ=it.parentContour?it.parentContour.height*HEIGHT_SCALE:minHeight;
     addTerrainMesh(group,buildTerraceTopGeometry(it),heightColorForItem(it),z);
-
     const dz=z-parentZ;
     if(Math.abs(dz)>.01){
       addTerrainMesh(
-        group,
-        buildCurtainGeometry(it.pathPoints,true),
-        heightColorForItem(it),
-        Math.min(z,parentZ),
-        Math.abs(dz)
+        group,buildCurtainGeometry(it.pathPoints,true),heightColorForItem(it),
+        Math.min(z,parentZ),Math.abs(dz)
       );
     }
   }
 
-  // 開いた等圧線：近接する隣の等圧線との間を、その2本を境界とする水平ストリップで接続。
-  // 高い側の等圧線位置にだけ垂直な段差面を置くため、段差境界は等圧線と一致する。
-  const open=visibleItems.filter(it=>!it.isClosed);
-  const pairs=chooseOpenContourPairs(open,bounds);
-  for(const [a,b] of pairs){
-    const low=a.height<=b.height?a:b;
-    const high=low===a?b:a;
-    const zLow=low.height*HEIGHT_SCALE;
-    const zHigh=high.height*HEIGHT_SCALE;
-
-    addTerrainMesh(
-      group,
-      buildBandBetweenContours(low,high,zLow),
-      heightColorForItem(low),
-      0
-    );
-
-    const dz=zHigh-zLow;
-    if(Math.abs(dz)>.01){
-      addTerrainMesh(
-        group,
-        buildCurtainGeometry(high.pathPoints,false),
-        heightColorForItem(high),
-        Math.min(zLow,zHigh),
-        Math.abs(dz)
-      );
-    }
-  }
+  // 上下左右の地図外枠まで伸びる等圧線を含め、開いた等圧線にも面を張る。
+  addOpenContourTerrain(group,visibleItems.filter(it=>!it.isClosed),bounds,minHeight,maxH);
 
   return group;
 }
