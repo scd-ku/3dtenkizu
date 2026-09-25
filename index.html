@@ -335,6 +335,7 @@
       <div class="row"><label>グリッド（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
       <div class="row"><label>自動高さ</label><input id="autoMode" type="checkbox"></div>
       <div class="row"><label>間隔</label><input id="gapFactor" type="range" min="0.2" max="1" step="0.02" value="0.82"></div>
+      <div class="row"><label>天気図画像</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.90" title="0%で非表示"></div>
       <div class="row"><span class="muted" id="labelInfo">ラベル未解析</span><span></span></div>
     </div>
 
@@ -379,21 +380,6 @@
     <div class="section">
       <h2>
         <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
-          <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
-            <rect x="3.5" y="4" width="17" height="16" rx="2"></rect>
-            <path d="M6 16l4-4 3 3 2-2 3 3M8 8.5h.01"></path>
-          </g>
-        </svg>
-        天気図画像（下敷き）
-      </h2>
-      <div class="row"><label>表示する</label><input id="imgVisible" type="checkbox" checked></div>
-      <div class="row"><label>不透明度</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.9"></div>
-      <div class="row"><label>高さ（Zオフセット）</label><input id="imgHeight" type="range" min="-200" max="200" step="0.1" value="-0.1"></div>
-    </div>
-
-    <div class="section">
-      <h2>
-        <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
             <path d="M3 7c3-3 6 3 9 0s6 3 9 0M3 12c3-3 6 3 9 0s6 3 9 0M3 17c3-3 6 3 9 0s6 3 9 0"></path>
           </g>
@@ -432,7 +418,7 @@
     </ul>
 
     <h3>3. 表示モード</h3>
-    <p>設定パネルの「表示スタイル」で、等圧線を「パイプ」「壁」「立体」から選べます。「壁」はパイプと同じ幅で地面から等圧線の高さまで立ち上がります。「立体」は閉じた等圧線の包含関係を調べ、隣り合う等圧線の間を水平面と側面でつないだ建築のコンター模型のような段状地形として表示します。色は高さに応じて赤から青へ変化し、色相補正と透明度をスライダーで調整できます。</p>
+    <p>設定パネルの「表示スタイル」で、等圧線を「パイプ」「壁」「立体」から選べます。「壁」はパイプと同じ幅で地面から等圧線の高さまで立ち上がります。「立体」は等圧線そのものを段差境界に使い、隣り合う等圧線の間を水平面で、等圧線位置を垂直面でつないだ建築のコンター模型のような段状地形として表示します。色は高さに応じて赤から青へ変化し、色相補正と透明度をスライダーで調整できます。</p>
 
     <h3>4. 等圧線の高さを変える</h3>
     <p>マウスを等圧線に重ねるとオレンジ色に強調され、気圧と高さが表示されます。等圧線を上下にドラッグすると高さを変更できます。Shiftキーを押しながら動かすと細かく、Altキーを押しながら動かすと大きく変更できます。右側パネルのスライダーや数値入力でも調整できます。</p>
@@ -441,7 +427,7 @@
     <p>「全体設定」の「自動高さ」をONにすると、気圧ラベルの順に等圧線を高さ方向へ配置します。最高点はZ軸矢印の内側に収まり、「間隔」だけで高さ方向の広がりを調整できます。</p>
 
     <h3>6. 表示と書き出し</h3>
-    <p>背景画像の不透明度・Z位置、グリッド、座標軸、背景色を変更できます。「書き出し」からSTLまたは本アプリ用SVGを保存できます。従来どおり、手元のSVG/SVGZを「開く」から読み込むこともできます。</p>
+    <p>全体設定の「天気図画像」スライダーで下敷き画像の濃さを調整できます。0%で非表示になります。グリッド、座標軸、背景色も変更できます。「書き出し」からSTLまたは本アプリ用SVGを保存できます。従来どおり、手元のSVG/SVGZを「開く」から読み込むこともできます。</p>
 
     <div class="helpNote">
       気象庁の実況天気図は観測時刻から公開まで時間差があります。選択した時刻のファイルがまだ公開されていない場合は、ひとつ前の時刻を選んでください。WebGLを利用できない端末では自動的にSVG互換描画へ切り替わります。
@@ -503,9 +489,7 @@ const ui = {
   displayOpacityValue: document.getElementById('displayOpacityValue'),
   basisVisible: document.getElementById('basisVisible'),
   gridVisible: document.getElementById('gridVisible'),
-  imgVisible: document.getElementById('imgVisible'),
   imgOpacity: document.getElementById('imgOpacity'),
-  imgHeight: document.getElementById('imgHeight'),
   autoMode: document.getElementById('autoMode'),
   gapFactor: document.getElementById('gapFactor'),
   labelInfo: document.getElementById('labelInfo'),
@@ -998,93 +982,218 @@ function applyItemTransform(it){
   it.pickPipeMesh.scale.set(1,1,dh);
 }
 
-function buildSteppedTerrainGeometry(){
-  if(items.length<2) return null;
-
-  const allPts=[];
-  for(const it of items){
-    for(const p of decimatePoints(it.pathPoints,50)) allPts.push(p);
+function contourBounds2D(points){
+  const pts=normalizedContourPoints(points,100);
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  for(const p of pts){
+    minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);
+    maxX=Math.max(maxX,p.x);maxY=Math.max(maxY,p.y);
   }
-  if(allPts.length<4) return null;
+  return {minX,minY,maxX,maxY,cx:(minX+maxX)/2,cy:(minY+maxY)/2};
+}
 
-  const box=new THREE.Box3().setFromPoints(allPts);
-  const min=box.min,max=box.max;
-  const w=Math.max(1,max.x-min.x),h=Math.max(1,max.y-min.y);
-  const cols=rendererMode==='svg'?26:58;
-  const rows=Math.max(18,Math.round(cols*h/w));
-  const dx=w/cols,dy=h/rows;
+function bboxDistance2D(a,b){
+  const dx=Math.max(0,a.minX-b.maxX,b.minX-a.maxX);
+  const dy=Math.max(0,a.minY-b.maxY,b.minY-a.maxY);
+  return Math.hypot(dx,dy);
+}
 
-  const contourSamples=items.map(it=>({
-    item:it,
-    points:decimatePoints(it.pathPoints,rendererMode==='svg'?24:40)
-  }));
-
-  function nearestContourHeight(x,y){
-    let bestD=Infinity,bestH=0;
-    for(const cs of contourSamples){
-      let d2min=Infinity;
-      for(const p of cs.points){
-        const dxp=p.x-x,dyp=p.y-y;
-        const d2=dxp*dxp+dyp*dyp;
-        if(d2<d2min) d2min=d2;
-      }
-      if(d2min<bestD){bestD=d2min;bestH=cs.item.height*HEIGHT_SCALE;}
-    }
-    return bestH;
+function resampleOpenPolyline(points,n=72){
+  let pts=normalizedContourPoints(points,180);
+  if(pts.length<2) return pts;
+  const lengths=[0];
+  for(let i=1;i<pts.length;i++) lengths.push(lengths[i-1]+pts[i].distanceTo(pts[i-1]));
+  const total=lengths[lengths.length-1];
+  if(total<=1e-9) return pts;
+  const out=[];
+  for(let k=0;k<n;k++){
+    const target=total*k/(n-1);
+    let i=1;
+    while(i<lengths.length && lengths[i]<target) i++;
+    if(i>=lengths.length){out.push(pts[pts.length-1].clone());continue;}
+    const a=pts[i-1],b=pts[i];
+    const seg=Math.max(1e-9,lengths[i]-lengths[i-1]);
+    const t=(target-lengths[i-1])/seg;
+    out.push(a.clone().lerp(b,t));
   }
+  return out;
+}
 
-  const heights=Array.from({length:rows},()=>Array(cols).fill(0));
-  for(let r=0;r<rows;r++){
-    for(let q=0;q<cols;q++){
-      heights[r][q]=nearestContourHeight(min.x+(q+.5)*dx,min.y+(r+.5)*dy);
-    }
+function orientPolylinePair(a,b){
+  if(a.length<2||b.length<2) return b;
+  const direct=a[0].distanceTo(b[0])+a[a.length-1].distanceTo(b[b.length-1]);
+  const reverse=a[0].distanceTo(b[b.length-1])+a[a.length-1].distanceTo(b[0]);
+  return reverse<direct?b.slice().reverse():b;
+}
+
+function buildBandBetweenContours(aItem,bItem,z){
+  let a=resampleOpenPolyline(aItem.pathPoints,72);
+  let b=resampleOpenPolyline(bItem.pathPoints,72);
+  b=orientPolylinePair(a,b);
+  const pos=[];
+  const tri=(p,q,r)=>pos.push(p.x,p.y,z,q.x,q.y,z,r.x,r.y,z);
+  for(let i=0;i<a.length-1;i++){
+    const a0=a[i],a1=a[i+1],b0=b[i],b1=b[i+1];
+    tri(a0,b0,b1);tri(a0,b1,a1);
   }
-
-  const pos=[],col=[];
-  const maxH=currentMaxHeightStrict();
-  const addVertex=(x,y,z,color)=>{
-    pos.push(x,y,z);
-    col.push(color.r,color.g,color.b);
-  };
-  const addTri=(a,b,d,color)=>{
-    addVertex(...a,color);addVertex(...b,color);addVertex(...d,color);
-  };
-  const addQuad=(a,b,d,e,color)=>{
-    addTri(a,b,d,color);addTri(a,d,e,color);
-  };
-
-  for(let r=0;r<rows;r++){
-    for(let q=0;q<cols;q++){
-      const z=heights[r][q];
-      const localH=z/HEIGHT_SCALE;
-      const color=heightColorForValue(localH,maxH);
-      const x0=min.x+q*dx,x1=x0+dx,y0=min.y+r*dy,y1=y0+dy;
-      addQuad([x0,y0,z],[x1,y0,z],[x1,y1,z],[x0,y1,z],color);
-
-      // 右隣との段差面
-      if(q<cols-1){
-        const z2=heights[r][q+1];
-        if(Math.abs(z2-z)>.01){
-          const c2=heightColorForValue((Math.max(z,z2))/HEIGHT_SCALE,maxH);
-          addQuad([x1,y0,z],[x1,y0,z2],[x1,y1,z2],[x1,y1,z],c2);
-        }
-      }
-      // 上隣との段差面
-      if(r<rows-1){
-        const z2=heights[r+1][q];
-        if(Math.abs(z2-z)>.01){
-          const c2=heightColorForValue((Math.max(z,z2))/HEIGHT_SCALE,maxH);
-          addQuad([x0,y1,z],[x1,y1,z],[x1,y1,z2],[x0,y1,z2],c2);
-        }
-      }
-    }
-  }
-
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
-  g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
   g.computeVertexNormals();
   return g;
+}
+
+function makeTerrainMaterial(color){
+  const opacity=displayOpacity();
+  const opts={
+    color,transparent:opacity<.999,opacity,side:THREE.DoubleSide,
+    depthWrite:opacity>.65,polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1
+  };
+  return rendererMode==='webgl'
+    ? new THREE.MeshStandardMaterial({...opts,roughness:.84,metalness:0,flatShading:true})
+    : new THREE.MeshBasicMaterial(opts);
+}
+
+function addTerrainMesh(group,geometry,color,z=0,scaleZ=1){
+  if(!geometry?.getAttribute?.('position') || geometry.getAttribute('position').count<3) return null;
+  const mesh=new THREE.Mesh(geometry,makeTerrainMaterial(color));
+  mesh.position.z=z;
+  mesh.scale.z=scaleZ;
+  mesh.renderOrder=-2;
+  group.add(mesh);
+  return mesh;
+}
+
+function buildBasePlateGeometry(bounds,rootClosed){
+  const pad=Math.max(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY)*0.015;
+  let outer=[
+    new THREE.Vector2(bounds.minX-pad,bounds.minY-pad),
+    new THREE.Vector2(bounds.maxX+pad,bounds.minY-pad),
+    new THREE.Vector2(bounds.maxX+pad,bounds.maxY+pad),
+    new THREE.Vector2(bounds.minX-pad,bounds.maxY+pad)
+  ];
+  if(!THREE.ShapeUtils.isClockWise(outer)) outer=outer.reverse();
+  const shape=new THREE.Shape();
+  shape.moveTo(outer[0].x,outer[0].y);
+  for(let i=1;i<outer.length;i++) shape.lineTo(outer[i].x,outer[i].y);
+  shape.closePath();
+
+  for(const root of rootClosed){
+    let hp=normalizedContourPoints(root.pathPoints,140).map(p=>new THREE.Vector2(p.x,p.y));
+    if(hp.length<3) continue;
+    if(THREE.ShapeUtils.isClockWise(hp)) hp=hp.reverse();
+    const hole=new THREE.Path();
+    hole.moveTo(hp[0].x,hp[0].y);
+    for(let i=1;i<hp.length;i++) hole.lineTo(hp[i].x,hp[i].y);
+    hole.closePath();
+    shape.holes.push(hole);
+  }
+  const g=new THREE.ShapeGeometry(shape);
+  g.computeVertexNormals();
+  return g;
+}
+
+function chooseOpenContourPairs(openItems,bounds){
+  if(openItems.length<2) return [];
+  const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
+  const meta=openItems.map(it=>({it,box:contourBounds2D(it.pathPoints)}));
+  const pairs=[];
+  const used=new Set();
+
+  for(const a of meta){
+    let best=null,bestScore=Infinity;
+    for(const b of meta){
+      if(a===b) continue;
+      if(Math.abs(a.it.height-b.it.height)<1e-6) continue;
+      const key=[items.indexOf(a.it),items.indexOf(b.it)].sort((x,y)=>x-y).join(':');
+      if(used.has(key)) continue;
+
+      const bd=bboxDistance2D(a.box,b.box);
+      const cd=Math.hypot(a.box.cx-b.box.cx,a.box.cy-b.box.cy);
+      const score=bd+cd*.18;
+      if(score<bestScore){bestScore=score;best={b,key};}
+    }
+    if(best && bestScore<diag*.22){
+      used.add(best.key);
+      pairs.push([a.it,best.b.it]);
+    }
+  }
+  return pairs;
+}
+
+function buildExactContourTerrain(){
+  const group=new THREE.Group();
+  if(items.length<2) return group;
+
+  computeContourHierarchy();
+
+  const allPts=[];
+  for(const it of items) for(const p of decimatePoints(it.pathPoints,60)) allPts.push(p);
+  const b3=new THREE.Box3().setFromPoints(allPts);
+  const bounds={minX:b3.min.x,minY:b3.min.y,maxX:b3.max.x,maxY:b3.max.y};
+
+  const visibleItems=items.filter(it=>it.ui?.vis?.checked ?? true);
+  const minHeight=Math.min(0,...visibleItems.map(it=>it.height*HEIGHT_SCALE));
+  const maxH=currentMaxHeightStrict();
+
+  // 最下段の基底面。閉じた最外周の内部は穴にし、その内部は各等圧線の段で埋める。
+  const roots=visibleItems.filter(it=>it.isClosed && !it.parentContour);
+  addTerrainMesh(
+    group,
+    buildBasePlateGeometry(bounds,roots),
+    heightColorForValue(minHeight/HEIGHT_SCALE,maxH),
+    minHeight
+  );
+
+  // 閉じた等圧線：線そのものを境界に、水平な段面と垂直な段差面を生成。
+  const closed=visibleItems.filter(it=>it.isClosed).sort((a,b)=>b.area-a.area);
+  for(const it of closed){
+    const z=it.height*HEIGHT_SCALE;
+    const parentZ=it.parentContour ? it.parentContour.height*HEIGHT_SCALE : minHeight;
+
+    addTerrainMesh(group,buildTerraceTopGeometry(it),heightColorForItem(it),z);
+
+    const dz=z-parentZ;
+    if(Math.abs(dz)>.01){
+      addTerrainMesh(
+        group,
+        buildCurtainGeometry(it.pathPoints,true),
+        heightColorForItem(it),
+        Math.min(z,parentZ),
+        Math.abs(dz)
+      );
+    }
+  }
+
+  // 開いた等圧線：近接する隣の等圧線との間を、その2本を境界とする水平ストリップで接続。
+  // 高い側の等圧線位置にだけ垂直な段差面を置くため、段差境界は等圧線と一致する。
+  const open=visibleItems.filter(it=>!it.isClosed);
+  const pairs=chooseOpenContourPairs(open,bounds);
+  for(const [a,b] of pairs){
+    const low=a.height<=b.height?a:b;
+    const high=low===a?b:a;
+    const zLow=low.height*HEIGHT_SCALE;
+    const zHigh=high.height*HEIGHT_SCALE;
+
+    addTerrainMesh(
+      group,
+      buildBandBetweenContours(low,high,zLow),
+      heightColorForItem(low),
+      0
+    );
+
+    const dz=zHigh-zLow;
+    if(Math.abs(dz)>.01){
+      addTerrainMesh(
+        group,
+        buildCurtainGeometry(high.pathPoints,false),
+        heightColorForItem(high),
+        Math.min(zLow,zHigh),
+        Math.abs(dz)
+      );
+    }
+  }
+
+  return group;
 }
 
 function rebuildSolidTerrain(){
@@ -1095,19 +1204,7 @@ function rebuildSolidTerrain(){
   }
   if(ui.displayMode.value!=='solid' || !currentLinesGroup || items.length<2) return;
 
-  const geometry=buildSteppedTerrainGeometry();
-  if(!geometry) return;
-  const opacity=displayOpacity();
-  const material=rendererMode==='webgl'
-    ? new THREE.MeshStandardMaterial({
-        vertexColors:true,transparent:opacity<.999,opacity,
-        side:THREE.DoubleSide,roughness:.82,metalness:0,flatShading:true,
-        polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1
-      })
-    : new THREE.MeshBasicMaterial({
-        vertexColors:true,transparent:opacity<.999,opacity,side:THREE.DoubleSide
-      });
-  solidTerrainMesh=new THREE.Mesh(geometry,material);
+  solidTerrainMesh=buildExactContourTerrain();
   solidTerrainMesh.renderOrder=-2;
   currentLinesGroup.add(solidTerrainMesh);
 }
@@ -1162,7 +1259,7 @@ async function buildOrUpdateWeatherPlane(rawSvgText){
   if(rendererMode==='svg'){
     // SVGRendererはテクスチャ非対応。元天気図をDOM画像として背面に表示する。
     ui.fallbackWeather.src=dataUrl;
-    ui.fallbackWeather.style.display=ui.imgVisible.checked?'block':'none';
+    ui.fallbackWeather.style.display=parseFloat(ui.imgOpacity.value)>0.001?'block':'none';
     ui.fallbackWeather.style.opacity=String(parseFloat(ui.imgOpacity.value));
 
     // フィット計算用の透明平面だけはThree.jsシーンに残す。
@@ -1212,16 +1309,16 @@ async function buildOrUpdateWeatherPlane(rawSvgText){
 }
 function applyImageUI(){
   if(rendererMode==='svg'){
-    ui.fallbackWeather.style.display=(weatherPlane && ui.imgVisible.checked)?'block':'none';
+    ui.fallbackWeather.style.display=(weatherPlane && parseFloat(ui.imgOpacity.value)>0.001)?'block':'none';
     ui.fallbackWeather.style.opacity=String(parseFloat(ui.imgOpacity.value));
   }
   if(!weatherPlane) return;
-  weatherPlane.visible=ui.imgVisible.checked;
+  weatherPlane.visible=parseFloat(ui.imgOpacity.value)>0.001;
   if(rendererMode==='webgl') weatherPlane.material.opacity=parseFloat(ui.imgOpacity.value);
   const s=HEIGHT_SCALE;
-  weatherPlane.position.z=parseFloat(ui.imgHeight.value)*s;
+  weatherPlane.position.z=-0.1*HEIGHT_SCALE;
 }
-['imgVisible','imgOpacity','imgHeight'].forEach(id=>ui[id].addEventListener('input',applyImageUI));
+ui.imgOpacity.addEventListener('input',applyImageUI);
 
 /* ==== SVG → items ==== */
 function centroidXY(pts){ let sx=0,sy=0; for(const p of pts){sx+=p.x;sy+=p.y;} const n=pts.length||1; return {x:sx/n,y:sy/n}; }
@@ -1601,10 +1698,8 @@ function doExportSTL(){
   const mode=ui.displayMode.value;
 
   if(mode==='solid'){
-    const geometry=buildSteppedTerrainGeometry();
-    if(geometry){
-      group.add(new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.DoubleSide})));
-    }
+    const terrain=buildExactContourTerrain();
+    group.add(terrain);
   }else{
     for(const it of items){
       if(!(it.ui?.vis?.checked ?? true)) continue;
