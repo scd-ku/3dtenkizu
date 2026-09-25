@@ -1753,6 +1753,16 @@ function parseMatrixTransform(tf){
 function transformPoint2D(p,m){
   return {x:m.a*p.x+m.c*p.y+m.e,y:m.b*p.x+m.d*p.y+m.f};
 }
+function multiplyAffine(a,b){
+  return {
+    a:a.a*b.a+a.c*b.b,
+    b:a.b*b.a+a.d*b.b,
+    c:a.a*b.c+a.c*b.d,
+    d:a.b*b.c+a.d*b.d,
+    e:a.a*b.e+a.c*b.f+a.e,
+    f:a.b*b.e+a.d*b.f+a.f
+  };
+}
 function cumulativeTransform(el,stopEl){
   const chain=[];
   let cur=el&&el.parentElement;
@@ -1760,14 +1770,16 @@ function cumulativeTransform(el,stopEl){
     chain.unshift(parseMatrixTransform(cur.getAttribute&&cur.getAttribute('transform')||''));
     cur=cur.parentElement;
   }
-  return chain.reduce((acc,m)=>({
-    a:acc.a*m.a+acc.c*m.b,
-    b:acc.b*m.a+acc.d*m.b,
-    c:acc.a*m.c+acc.c*m.d,
-    d:acc.b*m.c+acc.d*m.d,
-    e:acc.a*m.e+acc.c*m.f+acc.e,
-    f:acc.b*m.e+acc.d*m.f+acc.f
-  }),{a:1,b:0,c:0,d:1,e:0,f:0});
+  return chain.reduce((acc,m)=>multiplyAffine(acc,m),{a:1,b:0,c:0,d:1,e:0,f:0});
+}
+function cumulativeElementTransform(el,stopEl){
+  const chain=[];
+  let cur=el;
+  while(cur&&cur!==stopEl){
+    chain.unshift(parseMatrixTransform(cur.getAttribute&&cur.getAttribute('transform')||''));
+    cur=cur.parentElement;
+  }
+  return chain.reduce((acc,m)=>multiplyAffine(acc,m),{a:1,b:0,c:0,d:1,e:0,f:0});
 }
 function numericPointsFromElement(el){
   if(el.tagName==='polyline'){
@@ -1861,6 +1873,8 @@ function extractIsobarsOnly(svgText){
       const cls=classifyIsobarElement(el,cont,w,h);
       if(!cls) return;
       const dup=el.cloneNode(true);
+      const tm=cumulativeElementTransform(el,svg);
+      dup.setAttribute('transform','matrix('+[tm.a,tm.b,tm.c,tm.d,tm.e,tm.f].join(' ')+')');
       dup.setAttribute('fill','none');
       dup.setAttribute('data-isobar-line','1');
       dup.setAttribute('data-isobar-kind',cls.kind);
