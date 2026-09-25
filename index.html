@@ -952,7 +952,8 @@ function attachDisplayObjects(it,group){
   it.pickPipeMesh.userData.contourItem=it;
 
   const visible=it.ui?.vis?.checked ?? true;
-  it.pipeMesh.visible=visible;
+  const showContour=ui.displayMode.value!=='solid' || ui.solidContourVisible.checked;
+  it.pipeMesh.visible=visible && showContour;
   it.pickPipeMesh.visible=visible;
   it.hoverMesh.visible=false;
 
@@ -1735,9 +1736,11 @@ function buildList(orderByPressure=false){
     const c=document.createElement('span'); c.className='chip'; c.textContent=`線 ${(++i).toString().padStart(2,'0')}`;
     const vis=document.createElement('input'); vis.type='checkbox'; vis.checked=it.ui?.vis?.checked ?? true; vis.title='表示/非表示';
     vis.onchange=()=>{
-      if(it.pipeMesh) it.pipeMesh.visible=vis.checked;
+      const showContour=ui.displayMode.value!=='solid' || ui.solidContourVisible.checked;
+      if(it.pipeMesh) it.pipeMesh.visible=vis.checked && showContour;
       if(it.pickPipeMesh) it.pickPipeMesh.visible=vis.checked;
       if(it.hoverMesh && !vis.checked) it.hoverMesh.visible=false;
+      rebuildSolidTerrain();
     };
     const tag=document.createElement('span'); tag.className='small muted';
     if(it.kind==='svg'){
@@ -2089,7 +2092,8 @@ function buildProjectSVG(){
     autoMode: ui.autoMode.checked,
     displayMode: ui.displayMode.value,
     displayHue: parseFloat(ui.displayHue.value),
-    displayOpacity: parseFloat(ui.displayOpacity.value)
+    displayOpacity: parseFloat(ui.displayOpacity.value),
+    solidContourVisible: ui.solidContourVisible.checked
   });
   svg.appendChild(meta);
 
@@ -2172,7 +2176,9 @@ async function loadProjectSVG(svgText){
     if(meta?.displayMode && ['pipe','wall','solid'].includes(meta.displayMode)) ui.displayMode.value=meta.displayMode;
     if(isFinite(meta?.displayHue)) ui.displayHue.value=String(meta.displayHue);
     if(isFinite(meta?.displayOpacity)) ui.displayOpacity.value=String(meta.displayOpacity);
+    if(typeof meta?.solidContourVisible==='boolean') ui.solidContourVisible.checked=meta.solidContourVisible;
     updateStyleControlLabels();
+    updateSolidContourUI();
   }catch{}
 
   const svgClone = svg.cloneNode(true);
@@ -2573,6 +2579,14 @@ document.querySelectorAll('.section.collapsible>h2').forEach(head=>{
 });
 
 /* ==== 表示スタイル ==== */
+function updateSolidContourUI(){
+  const solid=ui.displayMode.value==='solid';
+  ui.solidContourRow.style.display=solid?'flex':'none';
+  for(const it of items){
+    const itemVisible=it.ui?.vis?.checked ?? true;
+    if(it.pipeMesh) it.pipeMesh.visible=itemVisible && (!solid || ui.solidContourVisible.checked);
+  }
+}
 function updateStyleControlLabels(){
   const hue=parseFloat(ui.displayHue.value)||0;
   const opacity=displayOpacity();
@@ -2591,6 +2605,7 @@ ui.displayMode.addEventListener('change',()=>{
   hoveredItem=null;
   ui.dragHud.style.display='none';
   rebuildAllDisplayGeometry();
+  updateSolidContourUI();
 
   camera.position.copy(savedPos);
   camera.quaternion.copy(savedQuat);
@@ -2608,7 +2623,9 @@ ui.displayOpacity.addEventListener('input',()=>{
   updateStyleControlLabels();
   updateHeightsAndColors();
 });
+ui.solidContourVisible.addEventListener('change',updateSolidContourUI);
 updateStyleControlLabels();
+updateSolidContourUI();
 
 /* ==== その他UI ==== */
 ui.bgColor.addEventListener('input',e=>{
