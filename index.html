@@ -707,7 +707,7 @@ function isClosedContour(points){
   const size=new THREE.Vector3(); box.getSize(size);
   const diag=Math.hypot(size.x,size.y);
   const d=pts[0].distanceTo(pts[pts.length-1]);
-  return d<=Math.max(PIPE_RADIUS*4,diag*0.025);
+  return d<=Math.max(PIPE_RADIUS*6,diag*0.05);
 }
 
 function buildWallGeometry(points,halfWidth=PIPE_RADIUS){
@@ -1162,7 +1162,7 @@ async function loadSVGFromString(svgText){
         pipeMesh:null,pickPipeMesh:null,
         activePick:null,
         pathPoints:pts3,path2D:pts2.map(pt=>({x:+pt.x,y:+pt.y})),
-        isClosed:isClosedContour(pts3),
+        isClosed:!!sub.autoClose || isClosedContour(pts3),
         height:0,ui:{},centroid:cen,pressure:undefined,area,autoTarget:0,
         userColor:null,kind:'svg',geometryMode:'pipe'
       };
