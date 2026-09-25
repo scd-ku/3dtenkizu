@@ -1404,7 +1404,13 @@ function parseTranslate(tf){
   if(t){const a=t[1].split(/[ ,]+\s*/).map(Number); if(a.length>=1) tx+=a[0]||0; if(a.length>=2) ty+=a[1]||0;}
   return {tx,ty};
 }
-function estimateXY(el){ let x=parseFloat(el.getAttribute("x")||"0"), y=parseFloat(el.getAttribute("y")||"0"), cur=el; while(cur&&cur.nodeType===1){ const tf=cur.getAttribute&&cur.getAttribute("transform"); const {tx,ty}=parseTranslate(tf||""); x+=tx; y+=ty; cur=cur.parentNode; } return {x,y}; }
+function estimateXY(el){
+  const x=parseFloat(el.getAttribute('x')||'0');
+  const y=parseFloat(el.getAttribute('y')||'0');
+  const root=el.ownerSVGElement;
+  const m=cumulativeElementTransform(el,root);
+  return transformPoint2D({x,y},m);
+}
 function readPressureLabels(svgText){
   const doc=new DOMParser().parseFromString(svgText,'image/svg+xml');
   const labels=[];
@@ -1424,7 +1430,8 @@ function firstGeometryCenter(group){
   for(const el of candidates.slice(0,4)){
     const pts=numericPointsFromElement(el);
     if(!pts.length) continue;
-    const m=cumulativeTransform(el,group.parentElement);
+    const root=el.ownerSVGElement;
+    const m=cumulativeElementTransform(el,root);
     const world=pts.map(p=>transformPoint2D(p,m));
     let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
     for(const p of world){
@@ -2082,13 +2089,15 @@ async function loadProjectSVG(svgText){
     it.activePick=it.pickPipeMesh;
   }
 
-  const box=new THREE.Box3().setFromObject(linesGroup); const cen3=new THREE.Vector3(), sz=new THREE.Vector3();
-  box.getCenter(cen3); box.getSize(sz);
-  linesGroup.position.set(-cen3.x, -cen3.y, 0);
+  const box=new THREE.Box3().setFromObject(linesGroup); const sz=new THREE.Vector3();
+  box.getSize(sz);
+  const canvasW=lastSvgDims?.w||sz.x||1000;
+  const canvasH=lastSvgDims?.h||sz.y||1000;
+  linesGroup.position.set(-canvasW/2,canvasH/2,0);
   rootLines.add(linesGroup);
   linesOffset.copy(linesGroup.position);
 
-  const scale=600/Math.max(sz.x,sz.y); chartGroup.scale.setScalar(isFinite(scale)&&scale>0?scale:1);
+  const scale=600/Math.max(canvasW,canvasH); chartGroup.scale.setScalar(isFinite(scale)&&scale>0?scale:1);
 
   buildList(true);
   updateHeightsAndColors();
