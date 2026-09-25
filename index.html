@@ -455,6 +455,8 @@ import { STLExporter } from 'three/addons/exporters/STLExporter.js';
 import * as pako from 'https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.esm.mjs';
 import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+import * as polygonClippingModule from 'https://cdn.jsdelivr.net/npm/polygon-clipping@0.15.7/+esm';
+const polygonClipping=polygonClippingModule.default||polygonClippingModule;
 
 const PICK_TUBE_SCALE = 2.8;
 /* 学校版: パイプ半径をわかりやすく固定（太め） */
@@ -1273,56 +1275,188 @@ function addTerrainMesh(group,geometry,color,z=0,scaleZ=1){
   group.add(mesh);
   return mesh;
 }
+
+function closeRing(points){
+  const ring=normalizedContourPoints(points,240).map(p=>[p.x,p.y]);
+  if(ring.length<3) return [];
+  const a=ring[0],b=ring[ring.length-1];
+  if(Math.hypot(a[0]-b[0],a[1]-b[1])>1e-7) ring.push([a[0],a[1]]);
+  return ring;
+}
+function rectangleMultiPolygon(bounds){
+  return [[[
+    [bounds.minX,bounds.minY],
+    [bounds.maxX,bounds.minY],
+    [bounds.maxX,bounds.maxY],
+    [bounds.minX,bounds.maxY],
+    [bounds.minX,bounds.minY]
+  ]]];
+}
+function polygonToMulti(points){
+  const ring=closeRing(points);
+  return ring.length>=4?[[ring]]:[];
+}
+function candidateToMulti(candidate){
+  if(!candidate?.points?.length) return [];
+  return polygonToMulti(candidate.points);
+}
+function safeUnion(...geoms){
+  const valid=geoms.filter(g=>Array.isArray(g)&&g.length);
+  if(!valid.length) return [];
+  if(valid.length===1) return valid[0];
+  try{return polygonClipping.union(...valid);}catch(err){console.warn('polygon union failed',err);return valid[0];}
+}
+function safeDifference(a,b){
+  if(!Array.isArray(a)||!a.length) return [];
+  if(!Array.isArray(b)||!b.length) return a;
+  try{return polygonClipping.difference(a,b);}catch(err){console.warn('polygon difference failed',err);return a;}
+}
+function highSideMultiPolygon(it,bounds){
+  const rect=rectangleMultiPolygon(bounds);
+  const center=it.pressureCenter||null;
+  const sign=it.pressureSign||0;
+
+  if(it.isClosed){
+    const inside=polygonToMulti(it.pathPoints);
+    if(!inside.length) return [];
+    const insidePts=normalizedContourPoints(it.pathPoints,200);
+    const centerInside=center?pointInPolygon2D(center,insidePts):null;
+    const highIsInside=center
+      ? (sign>0 ? centerInside : !centerInside)
+      : (it.height>=currentMaxHeightStrict()*.5);
+    return highIsInside?inside:safeDifference(rect,inside);
+  }
+
+  const candidates=openSideCandidates(it,bounds);
+  if(!candidates.length) return [];
+
+  if(center){
+    const contains=candidates.map(x=>pointInPolygon2D(center,x.points));
+    let idx=-1;
+    if(sign>0) idx=contains.findIndex(Boolean);
+    else idx=contains.findIndex(v=>!v);
+    if(idx>=0) return candidateToMulti(candidates[idx]);
+  }
+
+  candidates.sort((a,b)=>a.area-b.area);
+  const pick=it.height>=currentMaxHeightStrict()*.5
+    ? candidates[0]
+    : candidates[candidates.length-1];
+  return candidateToMulti(pick);
+}
+function ringToShape(ring){
+  if(!ring||ring.length<4) return null;
+  let pts=ring.slice(0,-1).map(p=>new THREE.Vector2(p[0],p[1]));
+  if(pts.length<3) return null;
+  if(!THREE.ShapeUtils.isClockWise(pts)) pts=pts.reverse();
+  const shape=new THREE.Shape();
+  shape.moveTo(pts[0].x,pts[0].y);
+  for(let i=1;i<pts.length;i++) shape.lineTo(pts[i].x,pts[i].y);
+  shape.closePath();
+  return shape;
+}
+function multiPolygonToGeometries(mp){
+  const out=[];
+  for(const poly of (mp||[])){
+    if(!poly?.length) continue;
+    const shape=ringToShape(poly[0]);
+    if(!shape) continue;
+    for(let i=1;i<poly.length;i++){
+      let hp=poly[i].slice(0,-1).map(p=>new THREE.Vector2(p[0],p[1]));
+      if(hp.length<3) continue;
+      if(THREE.ShapeUtils.isClockWise(hp)) hp=hp.reverse();
+      const hole=new THREE.Path();
+      hole.moveTo(hp[0].x,hp[0].y);
+      for(let j=1;j<hp.length;j++) hole.lineTo(hp[j].x,hp[j].y);
+      hole.closePath();
+      shape.holes.push(hole);
+    }
+    const g=new THREE.ShapeGeometry(shape);
+    g.computeVertexNormals();
+    out.push(g);
+  }
+  return out;
+}
+function addMultiPolygonSurface(group,mp,color,z){
+  for(const geom of multiPolygonToGeometries(mp)){
+    addTerrainMesh(group,geom,color,z);
+  }
+}
 function buildExactContourTerrain(){
   const group=new THREE.Group();
-  if(!items.length) return group;
-
-  const canvasW=lastSvgDims?.w||1000;
-  const canvasH=lastSvgDims?.h||1000;
-  // 立体外郭は天気図そのものの範囲に固定する。
-  const bounds={minX:0,minY:-canvasH,maxX:canvasW,maxY:0};
-
   const visibleItems=items.filter(it=>it.ui?.vis?.checked??true);
   if(!visibleItems.length) return group;
 
-  const minHeight=Math.min(0,...visibleItems.map(it=>it.height*HEIGHT_SCALE));
+  const canvasW=lastSvgDims?.w||1000;
+  const canvasH=lastSvgDims?.h||1000;
+  // 外郭は必ず天気図そのものの矩形内。
+  const bounds={minX:0,minY:-canvasH,maxX:canvasW,maxY:0};
+  const rect=rectangleMultiPolygon(bounds);
+
   const maxH=currentMaxHeightStrict();
+  const minHeight=Math.min(0,...visibleItems.map(it=>it.height*HEIGHT_SCALE));
 
-  // 最低面は天気図の矩形そのもの。パディングは一切付けない。
-  const baseGeom=buildShapeGeometryFromPolygon([
-    new THREE.Vector3(bounds.minX,bounds.minY,0),
-    new THREE.Vector3(bounds.maxX,bounds.minY,0),
-    new THREE.Vector3(bounds.maxX,bounds.maxY,0),
-    new THREE.Vector3(bounds.minX,bounds.maxY,0)
-  ]);
-  addTerrainMesh(group,baseGeom,heightColorForValue(minHeight/HEIGHT_SCALE,maxH),minHeight);
+  // 同じ高さの等圧線は同一の気圧レベルとしてまとめる。
+  const levelMap=new Map();
+  for(const it of visibleItems){
+    const key=(Math.round(it.height*1000)/1000).toFixed(3);
+    if(!levelMap.has(key)) levelMap.set(key,{height:it.height,items:[]});
+    levelMap.get(key).items.push(it);
+  }
+  const levels=[...levelMap.values()].sort((a,b)=>a.height-b.height);
 
-  const sorted=visibleItems.slice().sort((a,b)=>a.height-b.height);
-  const distinctLevels=[...new Set(sorted.map(it=>it.height))].sort((a,b)=>a-b);
+  // 各気圧レベルの「その値以上の領域」を等圧線から作る。
+  let regions=levels.map(level=>{
+    const pieces=level.items.map(it=>highSideMultiPolygon(it,bounds)).filter(x=>x.length);
+    return safeUnion(...pieces);
+  });
 
-  for(const it of sorted){
+  // 高いレベルの領域は、必ず低いレベルの領域に含まれるよう補正。
+  // これにより巨大な板の重なりではなく、入れ子状のコンター模型になる。
+  for(let i=regions.length-2;i>=0;i--){
+    regions[i]=safeUnion(regions[i],regions[i+1]);
+  }
+
+  // 最低レベルよりさらに低い部分は天気図矩形の基底面。
+  const outsideLowest=regions.length?safeDifference(rect,regions[0]):rect;
+  addMultiPolygonSurface(
+    group,outsideLowest,
+    heightColorForValue(minHeight/HEIGHT_SCALE,maxH),
+    minHeight
+  );
+
+  // 各段は「現在レベル領域 − 次の高いレベル領域」だけを描く。
+  // 面同士が重ならず、境界は元の等圧線になる。
+  for(let i=0;i<levels.length;i++){
+    const current=regions[i]||[];
+    const higher=i<levels.length-1?(regions[i+1]||[]):[];
+    const band=higher.length?safeDifference(current,higher):current;
+    const z=levels[i].height*HEIGHT_SCALE;
+    addMultiPolygonSurface(
+      group,band,
+      heightColorForValue(levels[i].height,maxH),
+      z
+    );
+  }
+
+  // 垂直な段差壁はパイプ表示と同じ等圧線そのものを使う。
+  const distinctHeights=levels.map(x=>x.height);
+  for(const it of visibleItems){
     const z=it.height*HEIGHT_SCALE;
-    const region=chooseHighSideRegion(it,bounds);
-    if(region?.geometry){
-      addTerrainMesh(group,region.geometry,heightColorForItem(it),z);
-    }
-
-    // 段差壁は必ず等圧線そのものの位置。
     let lower=minHeight;
-    for(const h of distinctLevels){
-      if(h<it.height) lower=Math.max(lower,h*HEIGHT_SCALE);
+    for(const h of distinctHeights){
+      if(h<it.height-1e-6) lower=Math.max(lower,h*HEIGHT_SCALE);
       else break;
     }
     const dz=z-lower;
-    if(Math.abs(dz)>.01){
-      addTerrainMesh(
-        group,
-        buildCurtainGeometry(it.pathPoints,it.isClosed),
-        heightColorForItem(it),
-        Math.min(z,lower),
-        Math.abs(dz)
-      );
-    }
+    if(Math.abs(dz)<.01) continue;
+    addTerrainMesh(
+      group,
+      buildCurtainGeometry(it.pathPoints,it.isClosed),
+      heightColorForItem(it),
+      Math.min(z,lower),
+      Math.abs(dz)
+    );
   }
 
   return group;
