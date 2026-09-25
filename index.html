@@ -1600,27 +1600,145 @@ async function readSvgOrSvgz(file){
   if(fb && fb.includes("<svg")) return fb;
   throw new Error("SVGZの解凍に失敗しました。");
 }
+function parseMatrixTransform(tf){
+  const out={a:1,b:0,c:0,d:1,e:0,f:0};
+  if(!tf) return out;
+  const m=tf.match(/matrix\(([^)]+)\)/);
+  if(m){
+    const v=m[1].trim().split(/[ ,]+/).map(Number);
+    if(v.length===6&&v.every(Number.isFinite)) return {a:v[0],b:v[1],c:v[2],d:v[3],e:v[4],f:v[5]};
+  }
+  const t=tf.match(/translate\(([^)]+)\)/);
+  if(t){
+    const v=t[1].trim().split(/[ ,]+/).map(Number);
+    out.e=v[0]||0;out.f=v[1]||0;
+  }
+  return out;
+}
+function transformPoint2D(p,m){
+  return {x:m.a*p.x+m.c*p.y+m.e,y:m.b*p.x+m.d*p.y+m.f};
+}
+function cumulativeTransform(el,stopEl){
+  const chain=[];
+  let cur=el&&el.parentElement;
+  while(cur&&cur!==stopEl){
+    chain.unshift(parseMatrixTransform(cur.getAttribute&&cur.getAttribute('transform')||''));
+    cur=cur.parentElement;
+  }
+  return chain.reduce((acc,m)=>({
+    a:acc.a*m.a+acc.c*m.b,
+    b:acc.b*m.a+acc.d*m.b,
+    c:acc.a*m.c+acc.c*m.d,
+    d:acc.b*m.c+acc.d*m.d,
+    e:acc.a*m.e+acc.c*m.f+acc.e,
+    f:acc.b*m.e+acc.d*m.f+acc.f
+  }),{a:1,b:0,c:0,d:1,e:0,f:0});
+}
+function numericPointsFromElement(el){
+  if(el.tagName==='polyline'){
+    return (el.getAttribute('points')||'').trim().split(/\s+/).map(tok=>{
+      const a=tok.split(',').map(Number);
+      return {x:a[0],y:a[1]};
+    }).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+  }
+  const nums=(el.getAttribute('d')||'').match(/-?\d*\.?\d+(?:e[-+]?\d+)?/ig);
+  const vals=nums?nums.map(Number):[];
+  const pts=[];
+  for(let i=0;i+1<vals.length;i+=2){
+    if(Number.isFinite(vals[i])&&Number.isFinite(vals[i+1])) pts.push({x:vals[i],y:vals[i+1]});
+  }
+  return pts;
+}
+function geometryStats(el,contour){
+  const m=cumulativeTransform(el,contour);
+  const pts=numericPointsFromElement(el).map(p=>transformPoint2D(p,m));
+  if(!pts.length) return {pts:[],diag:0,spanX:0,spanY:0};
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  for(const p of pts){
+    minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);
+    maxX=Math.max(maxX,p.x);maxY=Math.max(maxY,p.y);
+  }
+  return {pts,diag:Math.hypot(maxX-minX,maxY-minY),spanX:maxX-minX,spanY:maxY-minY};
+}
+function inheritedAttr(el,name,stopEl){
+  let cur=el;
+  while(cur&&cur!==stopEl){
+    const v=cur.getAttribute&&cur.getAttribute(name);
+    if(v!=null&&v!=='') return v;
+    cur=cur.parentElement;
+  }
+  return null;
+}
+function classifyIsobarElement(el,contour,w,h){
+  if(el.tagName!=='path'&&el.tagName!=='polyline') return null;
+
+  const fill=(inheritedAttr(el,'fill',contour)||'none').toLowerCase();
+  if(fill!=='none'&&fill!=='transparent') return null;
+
+  const stats=geometryStats(el,contour);
+  const minDim=Math.max(1,Math.min(w,h));
+  if(stats.pts.length<3) return null;
+
+  // 等圧線ラベルやラベル背景のような小さなベクトル要素を除外する。
+  if(stats.diag<minDim*0.035&&stats.spanX<minDim*0.03&&stats.spanY<minDim*0.03) return null;
+
+  // 旧仕様では非単位matrix + fill=none の小要素は気圧値ラベル。
+  let cur=el.parentElement;
+  while(cur&&cur!==contour){
+    const tf=cur.getAttribute&&cur.getAttribute('transform')||'';
+    const mm=tf.match(/matrix\(([^)]+)\)/);
+    if(mm){
+      const v=mm[1].trim().split(/[ ,]+/).map(Number);
+      const identity=v.length===6 &&
+        Math.abs(v[0]-1)<1e-6&&Math.abs(v[1])<1e-6&&Math.abs(v[2])<1e-6&&
+        Math.abs(v[3]-1)<1e-6&&Math.abs(v[4])<1e-6&&Math.abs(v[5])<1e-6;
+      const gf=(cur.getAttribute('fill')||'').toLowerCase();
+      if(!identity&&gf==='none'&&stats.diag<minDim*0.12) return null;
+    }
+    cur=cur.parentElement;
+  }
+
+  const dash=inheritedAttr(el,'stroke-dasharray',contour);
+  const sw=parseFloat(inheritedAttr(el,'stroke-width',contour)||'1');
+  if(dash&&dash!=='none') return {kind:'aux',step:2};
+  if(sw>=1.6) return {kind:'major',step:4};
+  return {kind:'normal',step:4};
+}
 function extractIsobarsOnly(svgText){
-  const doc=new DOMParser().parseFromString(svgText,"image/svg+xml");
-  const svg=doc.querySelector("svg"); if(!svg) return svgText; 
-  const {w,h}=normalizeSvgRoot(svg);
+  const doc=new DOMParser().parseFromString(svgText,'image/svg+xml');
+  const svg=doc.querySelector('svg');
+  if(!svg) return svgText;
+  const dim=normalizeSvgRoot(svg);
+  const w=dim.w,h=dim.h;
   lastSvgDims={w,h};
 
   const contours=svg.querySelectorAll('g#weatherChart g.contour');
-  const outDoc=document.implementation.createDocument("http://www.w3.org/2000/svg","svg",null);
-  const outSvg=outDoc.documentElement; outSvg.setAttribute("xmlns","http://www.w3.org/2000/svg");
-  outSvg.setAttribute("viewBox",`0 0 ${w} ${h}`); outSvg.setAttribute("width",String(w)); outSvg.setAttribute("height",String(h));
-  const DEFAULT_STROKE="#9aa4b2";
+  const outDoc=document.implementation.createDocument('http://www.w3.org/2000/svg','svg',null);
+  const outSvg=outDoc.documentElement;
+  outSvg.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  outSvg.setAttribute('viewBox','0 0 '+w+' '+h);
+  outSvg.setAttribute('width',String(w));
+  outSvg.setAttribute('height',String(h));
+
+  let kept=0,aux=0;
   contours.forEach(cont=>{
-    cont.querySelectorAll("path, polyline, circle, rect, ellipse").forEach(el=>{
+    cont.querySelectorAll('path, polyline').forEach(el=>{
+      const cls=classifyIsobarElement(el,cont,w,h);
+      if(!cls) return;
       const dup=el.cloneNode(true);
-      dup.setAttribute("fill","none");
-      if(!dup.getAttribute("stroke")||dup.getAttribute("stroke")==="none") dup.setAttribute("stroke",DEFAULT_STROKE);
-      if(!dup.getAttribute("stroke-width")) dup.setAttribute("stroke-width","1");
+      dup.setAttribute('fill','none');
+      dup.setAttribute('data-isobar-line','1');
+      dup.setAttribute('data-isobar-kind',cls.kind);
+      dup.setAttribute('data-isobar-step',String(cls.step));
+      if(!dup.getAttribute('stroke')||dup.getAttribute('stroke')==='none') dup.setAttribute('stroke','#9aa4b2');
+      if(!dup.getAttribute('stroke-width')) dup.setAttribute('stroke-width','1');
       outSvg.appendChild(dup);
+      kept++;
+      if(cls.kind==='aux') aux++;
     });
   });
-  if(!outSvg.firstElementChild) return new XMLSerializer().serializeToString(svg);
+
+  console.info('JMA isobar extraction:',kept,'lines; supplementary 2 hPa:',aux);
   return new XMLSerializer().serializeToString(outSvg);
 }
 
