@@ -429,7 +429,7 @@
     <p>マウスを等圧線に重ねるとオレンジ色に強調され、気圧と高さが表示されます。等圧線を上下にドラッグすると高さを変更できます。Shiftキーを押しながら動かすと細かく、Altキーを押しながら動かすと大きく変更できます。右側パネルのスライダーや数値入力でも調整できます。</p>
 
     <h3>5. 自動高さ</h3>
-    <p>「全体設定」の「自動高さ」をONにすると、気圧ラベルの順に等圧線を高さ方向へ配置します。最高点はZ軸矢印の内側に収まり、「間隔」だけで高さ方向の広がりを調整できます。</p>
+    <p>「全体設定」の「自動高さ」をONにすると、気圧値ラベルが取得できる場合はその値を使い、取得できない場合は高気圧（H）・低気圧（L）・低圧部・熱帯低気圧（TD）・台風の中心位置と等圧線の包含関係から相対的な高低を推定します。細い破線は2 hPaの補助等圧線として通常の4 hPa等圧線の半分の間隔で扱います。最高点はZ軸矢印の内側に収まります。</p>
 
     <h3>6. 表示と書き出し</h3>
     <p>全体設定の「天気図画像」スライダーで下敷き画像の濃さを調整できます。0%で非表示になります。グリッド、座標軸、背景色も変更できます。「書き出し」からSTLまたは本アプリ用SVGを保存できます。従来どおり、手元のSVG/SVGZを「開く」から読み込むこともできます。</p>
@@ -1331,6 +1331,13 @@ function polygonArea(pts){ let a=0; for(let i=0;i<pts.length;i++){ const p=pts[i
 
 async function loadSVGFromString(svgText){
   rootLines.clear(); items=[]; ui.list.innerHTML='';
+
+  const metaDoc=new DOMParser().parseFromString(svgText,'image/svg+xml');
+  const lineMeta=[...metaDoc.querySelectorAll('[data-isobar-line="1"]')].map(el=>({
+    kind:el.getAttribute('data-isobar-kind')||'normal',
+    step:parseFloat(el.getAttribute('data-isobar-step')||'4')||4
+  }));
+
   const loader=new SVGLoader(); let data;
   try{ data=loader.parse(svgText); }catch(e){ console.error('SVG parse 失敗',e); return; }
 
@@ -1338,7 +1345,9 @@ async function loadSVGFromString(svgText){
   currentLinesGroup=linesGroup;
   const sampleN=SAMPLE_DENSITY;
 
+  let pathIndex=0;
   for(const p of data.paths){
+    const meta=lineMeta[pathIndex++]||{kind:'normal',step:4};
     for(const sub of p.subPaths){
       const pts2=sub.getPoints(Math.max(2,sampleN)); if(pts2.length<2) continue;
       const pts3=pts2.map(pt=>new THREE.Vector3(+pt.x,-pt.y,0));
@@ -1349,7 +1358,8 @@ async function loadSVGFromString(svgText){
         pathPoints:pts3,path2D:pts2.map(pt=>({x:+pt.x,y:+pt.y})),
         isClosed:!!sub.autoClose || isClosedContour(pts3),
         height:0,ui:{},centroid:cen,pressure:undefined,area,autoTarget:0,
-        userColor:null,kind:'svg',geometryMode:'pipe'
+        userColor:null,kind:'svg',geometryMode:'pipe',
+        isobarKind:meta.kind,isobarStep:meta.step,pressureSource:''
       };
       items.push(it);
     }
@@ -1387,26 +1397,138 @@ function parseTranslate(tf){
 }
 function estimateXY(el){ let x=parseFloat(el.getAttribute("x")||"0"), y=parseFloat(el.getAttribute("y")||"0"), cur=el; while(cur&&cur.nodeType===1){ const tf=cur.getAttribute&&cur.getAttribute("transform"); const {tx,ty}=parseTranslate(tf||""); x+=tx; y+=ty; cur=cur.parentNode; } return {x,y}; }
 function readPressureLabels(svgText){
-  const doc=new DOMParser().parseFromString(svgText,"image/svg+xml"); const svg=doc.querySelector("svg"); if(!svg) return [];
-  const labels=[]; for(const t of doc.querySelectorAll("text")){
-    const raw=(t.textContent||"").trim(); const m=raw.match(/(-?\d{3,4})/); if(!m) continue;
-    const val=parseInt(m[1],10); if(!isFinite(val)||val<800||val>1100) continue;
-    const {x,y}=estimateXY(t); labels.push({x,y,value:val});
-  } return labels;
+  const doc=new DOMParser().parseFromString(svgText,'image/svg+xml');
+  const labels=[];
+  for(const t of doc.querySelectorAll('text')){
+    const raw=(t.textContent||'').trim();
+    const m=raw.match(/(?:^|\D)(8\d\d|9\d\d|10\d\d)(?:\D|$)/);
+    if(!m) continue;
+    const val=parseInt(m[1],10);
+    if(val<800||val>1100) continue;
+    const p=estimateXY(t);
+    labels.push({x:p.x,y:p.y,value:val});
+  }
+  return labels;
+}
+function firstGeometryCenter(group){
+  const candidates=[...group.querySelectorAll('path,polyline')];
+  for(const el of candidates.slice(0,4)){
+    const pts=numericPointsFromElement(el);
+    if(!pts.length) continue;
+    const m=cumulativeTransform(el,group.parentElement);
+    const world=pts.map(p=>transformPoint2D(p,m));
+    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+    for(const p of world){
+      minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);
+      maxX=Math.max(maxX,p.x);maxY=Math.max(maxY,p.y);
+    }
+    if(Number.isFinite(minX)) return {x:(minX+maxX)/2,y:(minY+maxY)/2};
+  }
+  return null;
+}
+function readPressureCenters(svgText){
+  const doc=new DOMParser().parseFromString(svgText,'image/svg+xml');
+  const defs=[
+    ['high',1,'H'],
+    ['low',-1,'L'],
+    ['llow',-1,'L'],
+    ['td',-1,'TD'],
+    ['typhoon',-1,'TY']
+  ];
+  const out=[];
+  for(const def of defs){
+    const cls=def[0],sign=def[1],label=def[2];
+    for(const g of doc.querySelectorAll('g#weatherChart g.'+cls)){
+      const p=firstGeometryCenter(g);
+      if(p) out.push({x:p.x,y:p.y,sign,label});
+    }
+  }
+  return out;
+}
+function pointToPolylineDistance2(point,points){
+  const pts=decimatePoints(points,80);
+  let best=Infinity;
+  for(const p of pts){
+    const dx=p.x-point.x,dy=p.y-point.y;
+    const d2=dx*dx+dy*dy;
+    if(d2<best) best=d2;
+  }
+  return best;
+}
+function assignSymbolAwarePressure(){
+  computeContourHierarchy();
+  const centers=readPressureCenters(lastRawSvgText);
+
+  if(!centers.length){
+    let level=0;
+    const ordered=items.slice().sort((a,b)=>a.area-b.area);
+    for(const it of ordered){
+      level+=(it.isobarStep||4);
+      it.pressure=level;
+      it.pressureSource=it.isobarKind==='aux'?'2 hPa補助線':'等圧線順';
+    }
+    ui.labelInfo.textContent='等圧線 '+items.length+'本（気圧中心記号なし）';
+    return;
+  }
+
+  const raw=[];
+  for(const it of items){
+    let score=0;
+    let strongest=null,strongestAbs=-1;
+
+    for(const center of centers){
+      const d=Math.sqrt(pointToPolylineDistance2(center,it.pathPoints))+18;
+      let influence=center.sign/d;
+
+      if(it.isClosed&&pointInPolygon2D(center,it.pathPoints)){
+        let depth=1;
+        let cur=it;
+        while(cur.parentContour){depth++;cur=cur.parentContour;}
+        influence*=4+depth;
+      }
+      score+=influence;
+      if(Math.abs(influence)>strongestAbs){
+        strongestAbs=Math.abs(influence);
+        strongest=center;
+      }
+    }
+    raw.push({it,score,strongest});
+  }
+
+  raw.sort((a,b)=>a.score-b.score);
+  let level=0;
+  for(let i=0;i<raw.length;i++){
+    if(i>0){
+      const step=Math.min(raw[i].it.isobarStep||4,raw[i-1].it.isobarStep||4);
+      level+=step;
+    }
+    raw[i].it.pressure=level;
+    const symbol=raw[i].strongest?raw[i].strongest.label:'';
+    const spacing=raw[i].it.isobarKind==='aux'?'2hPa補助線':'4hPa等圧線';
+    raw[i].it.pressureSource=(symbol+' '+spacing).trim();
+  }
+
+  const highs=centers.filter(x=>x.sign>0).length;
+  const lows=centers.filter(x=>x.sign<0).length;
+  const aux=items.filter(x=>x.isobarKind==='aux').length;
+  ui.labelInfo.textContent='H:'+highs+' / L系:'+lows+' / 補助2hPa:'+aux;
 }
 async function assignPressuresFromLabelsOrAreas(){
   const labs=readPressureLabels(lastRawSvgText);
   if(labs.length){
-    ui.labelInfo.textContent=`検出ラベル: ${labs.length} 個`;
     for(const it of items){
-      const {x,y}=it.centroid; let best=null,bd=Infinity;
-      for(const lb of labs){ const d=(lb.x-x)**2+(lb.y-y)**2; if(d<bd){bd=d; best=lb;} }
-      it.pressure=best?.value;
+      const x=it.centroid.x,y=it.centroid.y;
+      let best=null,bd=Infinity;
+      for(const lb of labs){
+        const d=(lb.x-x)*(lb.x-x)+(lb.y-y)*(lb.y-y);
+        if(d<bd){bd=d;best=lb;}
+      }
+      it.pressure=best?best.value:undefined;
+      it.pressureSource='気圧値ラベル';
     }
+    ui.labelInfo.textContent='気圧値ラベル: '+labs.length+'個';
   }else{
-    ui.labelInfo.textContent='ラベルなし：面積ベースで自動配置';
-    const arr=items.slice().sort((a,b)=>a.area-b.area);
-    arr.forEach((it,idx)=>{ it.pressure=idx; });
+    assignSymbolAwarePressure();
   }
 }
 
@@ -1471,7 +1593,12 @@ function buildList(orderByPressure=false){
       if(it.pickPipeMesh) it.pickPipeMesh.visible=vis.checked;
       if(it.hoverMesh && !vis.checked) it.hoverMesh.visible=false;
     };
-    const tag=document.createElement('span'); tag.className='small muted'; tag.textContent=(it.kind==='svg')?(isFinite(it.pressure)?`P=${it.pressure}`:`P=?`):'';
+    const tag=document.createElement('span'); tag.className='small muted';
+    if(it.kind==='svg'){
+      tag.textContent=(it.pressureSource==='気圧値ラベル'&&isFinite(it.pressure))
+        ? String(it.pressure)+' hPa'
+        : (it.pressureSource||'等圧線');
+    }
     t.append(c,vis,tag); card.appendChild(t);
 
     const row1=document.createElement('div'); row1.className='row';
@@ -1527,7 +1654,9 @@ function setHoveredItem(it,clientX,clientY){
     }
   }
   if(it && !draggingItem){
-    const p=isFinite(it.pressure)?`P=${it.pressure} hPa`:`線 ${String(it.listIndex||'').padStart(2,'0')}`;
+    const p=(it.pressureSource==='気圧値ラベル'&&isFinite(it.pressure))
+      ? String(it.pressure)+' hPa'
+      : (it.pressureSource||('線 '+String(it.listIndex||'').padStart(2,'0')));
     updateHudByClientXY(clientX,clientY,it.height,`${p} / 高さ`);
     ui.dragHud.style.display='block';
   }else if(!draggingItem){
