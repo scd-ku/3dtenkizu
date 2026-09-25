@@ -1330,7 +1330,9 @@ async function discoverJmaSvgUrl(){
         if(/COLOR/i.test(context)) score+=15;
         if(new RegExp(`${hour}時`).test(row)) score+=25;
         if(new RegExp(`${day}.*${hour}`).test(href.replace(/\D/g,''))) score+=20;
-        if(/\.svg(?:$|[?#])/i.test(href)) score+=5;
+        // 気象庁のベクトル天気図は .svgz を優先する。
+        if(/\.svgz(?:$|[?#])/i.test(href)) score+=30;
+        else if(/\.svg(?:$|[?#])/i.test(href)) score-=10;
         return {a,href,row,score};
       }).sort((x,y)=>y.score-x.score);
 
@@ -1346,7 +1348,12 @@ async function discoverJmaSvgUrl(){
       const re=/((?:https?:\/\/[^"'<>\s]+)?[^"'<>\s]*SPAS_COLOR_[0-9]{12,14}\.svgz?)/ig;
       const matches=[...html.matchAll(re)].map(m=>m[1]);
       const hhKey=`${day}${hour}`;
-      const best=matches.find(x=>x.replace(/\D/g,'').includes(hhKey)) || matches[0];
+      const sameTime=matches.filter(x=>x.replace(/\D/g,'').includes(hhKey));
+      const best=
+        sameTime.find(x=>/\.svgz(?:$|[?#])/i.test(x)) ||
+        sameTime[0] ||
+        matches.find(x=>/\.svgz(?:$|[?#])/i.test(x)) ||
+        matches[0];
       if(best){
         return {url:new URL(best,pageUrl).href,pageUrl,discovered:true};
       }
@@ -1371,11 +1378,14 @@ async function discoverJmaSvgUrl(){
   ];
   const candidates=[];
   for(const base of bases){
-    for(const stamp of [jst12,utc12]){
-      candidates.push(
-        `${base}/${ym}/SPAS_COLOR_${stamp}.svg`,
-        `${base}/${ym}/SPAS_COLOR_${stamp}.svgz`
-      );
+    for(const stamp of [utc12,jst12]){
+      candidates.push(`${base}/${ym}/SPAS_COLOR_${stamp}.svgz`);
+    }
+  }
+  // 古い期間などで非圧縮SVGしかない場合だけ最後に試す。
+  for(const base of bases){
+    for(const stamp of [utc12,jst12]){
+      candidates.push(`${base}/${ym}/SPAS_COLOR_${stamp}.svg`);
     }
   }
 
@@ -1395,17 +1405,28 @@ async function fetchSvgTextFromUrl(url,preloadedResponse=null){
 
   if(/\.svgz(?:$|[?#])/i.test(url)){
     const u8=new Uint8Array(await res.arrayBuffer());
+
+    // Chrome/サーバーの組み合わせによっては Content-Encoding により
+    // fetch() がすでにgzipを展開して返すことがある。まず生のUTF-8として確認する。
+    try{
+      const plain=new TextDecoder('utf-8',{fatal:false}).decode(u8);
+      if(plain.includes('<svg')) return plain;
+    }catch{}
+
+    // 未展開のSVGZならgzip/zlib/raw-deflateを順に試す。
     for(const fn of [
       ()=>pako.ungzip(u8),
       ()=>pako.inflate(u8),
       ()=>pako.inflateRaw(u8)
     ]){
       try{
-        const text=new TextDecoder('utf-8').decode(fn());
+        const text=new TextDecoder('utf-8',{fatal:false}).decode(fn());
         if(text.includes('<svg')) return text;
       }catch{}
     }
-    throw new Error('SVGZを展開できませんでした。');
+
+    const sig=[...u8.slice(0,8)].map(v=>v.toString(16).padStart(2,'0')).join(' ');
+    throw new Error(`SVGZを展開できませんでした（先頭バイト: ${sig}）`);
   }
 
   const text=await res.text();
@@ -1416,6 +1437,7 @@ async function fetchSvgTextFromUrl(url,preloadedResponse=null){
 async function fetchJmaChart(){
   const info=selectedJstToUtcInfo();
   const found=await discoverJmaSvgUrl();
+  console.info('JMA selected SVG URL:',found.url);
   const svgText=await fetchSvgTextFromUrl(found.url,found.response||null);
   return {
     kind:'svg',
