@@ -566,6 +566,10 @@ const orthoCamera = new THREE.OrthographicCamera(-500,500,500,-500,-50000,50000)
 orthoCamera.up.set(0,0,1);
 orthoCamera.position.copy(perspCamera.position);
 
+const DEFAULT_VIEW_TARGET=new THREE.Vector3(0,0,80);
+const DEFAULT_VIEW_DIR=new THREE.Vector3(0.92,-0.92,0.72).normalize();
+const DEFAULT_VIEW_RADIUS=520;
+
 function makeControls(cam){
   if(controls) controls.dispose();
   controls = new OrbitControls(cam, renderer.domElement);
@@ -634,6 +638,32 @@ addEventListener('resize',resize); resize();
 (function anim(){ requestAnimationFrame(anim); controls.update(); renderer.render(scene,camera); })();
 
 /* ==== views ==== */
+function setDefaultObliqueView(){
+  const v=document.getElementById('viewer');
+  const aspect=Math.max(.2,v.clientWidth/Math.max(1,v.clientHeight));
+
+  _target.copy(DEFAULT_VIEW_TARGET);
+
+  if(camera.isPerspectiveCamera){
+    const vfov=THREE.MathUtils.degToRad(camera.fov);
+    const hfov=2*Math.atan(Math.tan(vfov/2)*aspect);
+    const halfAngle=Math.max(THREE.MathUtils.degToRad(12),Math.min(vfov,hfov)/2);
+    const dist=(DEFAULT_VIEW_RADIUS/Math.sin(halfAngle))*1.04;
+    camera.position.copy(DEFAULT_VIEW_TARGET).add(DEFAULT_VIEW_DIR.clone().multiplyScalar(dist));
+    camera.near=Math.max(.1,dist/1000);
+    camera.far=dist*100;
+    camera.updateProjectionMatrix();
+  }else{
+    const halfH=430;
+    const halfW=halfH*aspect;
+    camera.left=-halfW;camera.right=halfW;camera.top=halfH;camera.bottom=-halfH;
+    camera.near=-50000;camera.far=50000;
+    camera.position.copy(DEFAULT_VIEW_TARGET).add(DEFAULT_VIEW_DIR.clone().multiplyScalar(1200));
+    camera.updateProjectionMatrix();
+  }
+  controls.target.copy(DEFAULT_VIEW_TARGET);
+  controls.update();
+}
 function fitView(target=chartGroup){
   const b=new THREE.Box3().setFromObject(target); const sz=new THREE.Vector3(), cen=new THREE.Vector3();
   b.getSize(sz); b.getCenter(cen); if(!(isFinite(sz.x)&&isFinite(sz.y))) return;
@@ -653,6 +683,8 @@ function fitView(target=chartGroup){
 function viewTop(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x,c.y,c.z+dist); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
 function viewFront(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x,c.y-dist,c.z); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
 function viewSide(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x+dist,c.y,c.z); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
+
+setDefaultObliqueView();
 
 /* ==== helpers ==== */
 function colorFromHeight(h,maxH){ if(maxH<=0 || h<=0) return new THREE.Color(0xff0000); const t=Math.min(Math.max(h/maxH,0),1); const c=new THREE.Color(); c.setHSL((2/3)*t,1,0.55); return c; }
@@ -1137,7 +1169,7 @@ function perimeterPathClockwise(fromSnap,toSnap,bounds){
   const P=2*(w+h);
   let a=fromSnap.t,b=toSnap.t;
   if(b<a) b+=P;
-  const cuts=[w,w+h,2*w+h,P,2*w+h+P,w+P,w+h+P];
+  const cuts=[w,w+h,2*w+h,P,w+P,w+h+P,2*w+h+P];
   const pts=[fromSnap.p.clone()];
   for(const t of cuts.sort((x,y)=>x-y)){
     if(t>a+1e-6&&t<b-1e-6) pts.push(perimeterPoint(t,bounds));
@@ -1153,12 +1185,6 @@ function polygonAreaAbs(points){
   }
   return Math.abs(a)*.5;
 }
-function polygonCenter2D(points){
-  let x=0,y=0;
-  for(const p of points){x+=p.x;y+=p.y;}
-  const n=points.length||1;
-  return new THREE.Vector2(x/n,y/n);
-}
 function buildShapeGeometryFromPolygon(points){
   if(points.length<3) return new THREE.BufferGeometry();
   let pts=points.map(p=>new THREE.Vector2(p.x,p.y));
@@ -1171,168 +1197,154 @@ function buildShapeGeometryFromPolygon(points){
   g.computeVertexNormals();
   return g;
 }
-function boundaryClosureCandidates(it,bounds){
-  const pts=normalizedContourPoints(it.pathPoints,180);
-  if(pts.length<2) return [];
-  const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
-  const a=boundarySnap(pts[0],bounds),b=boundarySnap(pts[pts.length-1],bounds);
-  if(a.d>diag*.075||b.d>diag*.075) return [];
+function buildRectangleWithHoleGeometry(bounds,holePoints){
+  let outer=[
+    new THREE.Vector2(bounds.minX,bounds.minY),
+    new THREE.Vector2(bounds.maxX,bounds.minY),
+    new THREE.Vector2(bounds.maxX,bounds.maxY),
+    new THREE.Vector2(bounds.minX,bounds.maxY)
+  ];
+  if(!THREE.ShapeUtils.isClockWise(outer)) outer=outer.reverse();
+  const shape=new THREE.Shape();
+  shape.moveTo(outer[0].x,outer[0].y);
+  for(let i=1;i<outer.length;i++) shape.lineTo(outer[i].x,outer[i].y);
+  shape.closePath();
 
-  const cw=perimeterPathClockwise(b,a,bounds);
-  const ccw=perimeterPathClockwise(a,b,bounds).reverse();
+  let hp=normalizedContourPoints(holePoints,180).map(p=>new THREE.Vector2(p.x,p.y));
+  if(THREE.ShapeUtils.isClockWise(hp)) hp=hp.reverse();
+  const hole=new THREE.Path();
+  hole.moveTo(hp[0].x,hp[0].y);
+  for(let i=1;i<hp.length;i++) hole.lineTo(hp[i].x,hp[i].y);
+  hole.closePath();
+  shape.holes.push(hole);
+
+  const g=new THREE.ShapeGeometry(shape);
+  g.computeVertexNormals();
+  return g;
+}
+function openSideCandidates(it,bounds){
+  const pts=normalizedContourPoints(it.pathPoints,200);
+  if(pts.length<2) return [];
+
+  // 端点が地図端から少し離れていても、最寄りの外枠へ直線で延長して閉じる。
+  const a=boundarySnap(pts[0],bounds);
+  const b=boundarySnap(pts[pts.length-1],bounds);
   const core=pts.map(p=>p.clone());
 
-  const make=(edge)=>{
-    const poly=core.slice();
-    if(poly[poly.length-1].distanceTo(edge[0])>1e-6) poly.push(edge[0].clone());
+  const makeCandidate=(edge)=>{
+    const poly=[a.p.clone(),...core,b.p.clone()];
     for(let i=1;i<edge.length;i++) poly.push(edge[i].clone());
     if(poly[poly.length-1].distanceTo(poly[0])>1e-6) poly.push(poly[0].clone());
-    return {points:poly,area:polygonAreaAbs(poly),center:polygonCenter2D(poly)};
+    return {points:poly,area:polygonAreaAbs(poly)};
   };
-  return [make(cw),make(ccw)];
+
+  const edge1=perimeterPathClockwise(b,a,bounds);
+  const edge2=perimeterPathClockwise(a,b,bounds).reverse();
+  return [makeCandidate(edge1),makeCandidate(edge2)];
 }
-function openBoundaryMeta(it,bounds){
-  const pts=normalizedContourPoints(it.pathPoints,120);
-  if(pts.length<2) return null;
-  const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
-  const a=boundarySnap(pts[0],bounds),b=boundarySnap(pts[pts.length-1],bounds);
-  if(a.d>diag*.075||b.d>diag*.075) return null;
-  const sides=[a.side,b.side].sort();
-  const box=contourBounds2D(it.pathPoints);
-  return {it,a,b,signature:sides.join('-'),box};
-}
-function sortOpenGroup(meta){
-  const sig=meta[0]?.signature||'';
-  if(sig==='bottom-top') return meta.sort((a,b)=>a.box.cx-b.box.cx);
-  if(sig==='left-right') return meta.sort((a,b)=>a.box.cy-b.box.cy);
-  return meta.sort((a,b)=>(a.box.cx+a.box.cy)-(b.box.cx+b.box.cy));
-}
-function chooseCapOutsideNeighbor(it,neighbor,bounds){
-  const candidates=boundaryClosureCandidates(it,bounds);
+function chooseHighSideRegion(it,bounds){
+  const center=it.pressureCenter||null;
+  const sign=it.pressureSign||0;
+
+  if(it.isClosed){
+    const inside=normalizedContourPoints(it.pathPoints,200);
+    const centerInside=center?pointInPolygon2D(center,inside):null;
+    const highIsInside=center
+      ? (sign>0 ? centerInside : !centerInside)
+      : (it.height>=currentMaxHeightStrict()*.5);
+
+    if(highIsInside){
+      return {geometry:buildShapeGeometryFromPolygon(inside),inside:true};
+    }
+    return {geometry:buildRectangleWithHoleGeometry(bounds,inside),inside:false};
+  }
+
+  const candidates=openSideCandidates(it,bounds);
   if(!candidates.length) return null;
-  if(!neighbor) return candidates.sort((a,b)=>a.area-b.area)[0];
-  const ncenter=contourCenter(neighbor.pathPoints);
-  const outside=candidates.filter(c=>!pointInPolygon2D(ncenter,c.points));
-  if(outside.length) return outside.sort((a,b)=>a.area-b.area)[0];
-  return candidates.sort((a,b)=>a.area-b.area)[0];
+
+  if(center){
+    const contains=candidates.map(x=>pointInPolygon2D(center,x.points));
+    let index=-1;
+    if(sign>0) index=contains.findIndex(Boolean);
+    else index=contains.findIndex(v=>!v);
+    if(index>=0) return {geometry:buildShapeGeometryFromPolygon(candidates[index].points),inside:true};
+  }
+
+  // 中心情報が取れない場合は、高い線ほど小さい側を採用する。
+  candidates.sort((a,b)=>a.area-b.area);
+  const pick=it.height>=currentMaxHeightStrict()*.5?candidates[0]:candidates[candidates.length-1];
+  return {geometry:buildShapeGeometryFromPolygon(pick.points),inside:true};
 }
-function addOpenContourTerrain(group,openItems,bounds,minHeight,maxH){
-  const metas=openItems.map(it=>openBoundaryMeta(it,bounds));
-  const boundaryMetas=metas.filter(Boolean);
-  const internal=openItems.filter((it,i)=>!metas[i]);
-
-  const groups=new Map();
-  for(const m of boundaryMetas){
-    if(!groups.has(m.signature)) groups.set(m.signature,[]);
-    groups.get(m.signature).push(m);
-  }
-
-  for(const arr0 of groups.values()){
-    const arr=sortOpenGroup(arr0);
-    // 隣り合う開いた等圧線の間を面で埋める。
-    for(let i=0;i<arr.length-1;i++){
-      const a=arr[i].it,b=arr[i+1].it;
-      const low=a.height<=b.height?a:b;
-      const high=low===a?b:a;
-      const zLow=low.height*HEIGHT_SCALE;
-      const zHigh=high.height*HEIGHT_SCALE;
-      addTerrainMesh(group,buildBandBetweenContours(a,b,zLow),heightColorForItem(low),0);
-      const dz=zHigh-zLow;
-      if(Math.abs(dz)>.01){
-        addTerrainMesh(
-          group,buildCurtainGeometry(high.pathPoints,false),heightColorForItem(high),
-          Math.min(zLow,zHigh),Math.abs(dz)
-        );
-      }
-    }
-
-    // 一番外側の開いた等圧線から地図外枠までの領域も面にする。
-    if(arr.length){
-      const first=arr[0].it,last=arr[arr.length-1].it;
-      const firstCap=chooseCapOutsideNeighbor(first,arr[1]?.it||null,bounds);
-      const lastCap=arr.length>1?chooseCapOutsideNeighbor(last,arr[arr.length-2]?.it||null,bounds):null;
-
-      if(firstCap){
-        addTerrainMesh(
-          group,buildShapeGeometryFromPolygon(firstCap.points),
-          heightColorForItem(first),first.height*HEIGHT_SCALE
-        );
-      }
-      if(lastCap && last!==first){
-        addTerrainMesh(
-          group,buildShapeGeometryFromPolygon(lastCap.points),
-          heightColorForItem(last),last.height*HEIGHT_SCALE
-        );
-      }
-    }
-  }
-
-  // 地図外枠に届かない開放線は、空間的に最も近い別の開放線とだけ接続する。
-  const used=new Set();
-  for(const a of internal){
-    let best=null,bestD=Infinity;
-    const ab=contourBounds2D(a.pathPoints);
-    for(const b of internal){
-      if(a===b) continue;
-      const key=[items.indexOf(a),items.indexOf(b)].sort((x,y)=>x-y).join(':');
-      if(used.has(key)) continue;
-      const d=bboxDistance2D(ab,contourBounds2D(b.pathPoints));
-      if(d<bestD){bestD=d;best={b,key};}
-    }
-    const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
-    if(best&&bestD<diag*.08){
-      used.add(best.key);
-      const b=best.b;
-      const low=a.height<=b.height?a:b;
-      const high=low===a?b:a;
-      const zLow=low.height*HEIGHT_SCALE,zHigh=high.height*HEIGHT_SCALE;
-      addTerrainMesh(group,buildBandBetweenContours(a,b,zLow),heightColorForItem(low),0);
-      if(Math.abs(zHigh-zLow)>.01){
-        addTerrainMesh(
-          group,buildCurtainGeometry(high.pathPoints,false),heightColorForItem(high),
-          Math.min(zLow,zHigh),Math.abs(zHigh-zLow)
-        );
-      }
-    }
-  }
+function makeTerrainMaterial(color){
+  const opacity=displayOpacity();
+  const opts={
+    color,transparent:opacity<.999,opacity,side:THREE.DoubleSide,
+    depthWrite:opacity>.65,polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1
+  };
+  return rendererMode==='webgl'
+    ? new THREE.MeshStandardMaterial({...opts,roughness:.84,metalness:0,flatShading:true})
+    : new THREE.MeshBasicMaterial(opts);
+}
+function addTerrainMesh(group,geometry,color,z=0,scaleZ=1){
+  if(!geometry?.getAttribute?.('position')||geometry.getAttribute('position').count<3) return null;
+  const mesh=new THREE.Mesh(geometry,makeTerrainMaterial(color));
+  mesh.position.z=z;
+  mesh.scale.z=scaleZ;
+  mesh.renderOrder=-2;
+  group.add(mesh);
+  return mesh;
 }
 function buildExactContourTerrain(){
   const group=new THREE.Group();
-  if(items.length<2) return group;
-
-  computeContourHierarchy();
+  if(!items.length) return group;
 
   const canvasW=lastSvgDims?.w||1000;
   const canvasH=lastSvgDims?.h||1000;
+  // 立体外郭は天気図そのものの範囲に固定する。
   const bounds={minX:0,minY:-canvasH,maxX:canvasW,maxY:0};
 
-  const visibleItems=items.filter(it=>it.ui?.vis?.checked ?? true);
+  const visibleItems=items.filter(it=>it.ui?.vis?.checked??true);
+  if(!visibleItems.length) return group;
+
   const minHeight=Math.min(0,...visibleItems.map(it=>it.height*HEIGHT_SCALE));
   const maxH=currentMaxHeightStrict();
 
-  const roots=visibleItems.filter(it=>it.isClosed&&!it.parentContour);
-  addTerrainMesh(
-    group,buildBasePlateGeometry(bounds,roots),
-    heightColorForValue(minHeight/HEIGHT_SCALE,maxH),minHeight
-  );
+  // 最低面は天気図の矩形そのもの。パディングは一切付けない。
+  const baseGeom=buildShapeGeometryFromPolygon([
+    new THREE.Vector3(bounds.minX,bounds.minY,0),
+    new THREE.Vector3(bounds.maxX,bounds.minY,0),
+    new THREE.Vector3(bounds.maxX,bounds.maxY,0),
+    new THREE.Vector3(bounds.minX,bounds.maxY,0)
+  ]);
+  addTerrainMesh(group,baseGeom,heightColorForValue(minHeight/HEIGHT_SCALE,maxH),minHeight);
 
-  // 閉じた等圧線は従来どおり、線そのものを水平面と段差面の境界に使う。
-  const closed=visibleItems.filter(it=>it.isClosed).sort((a,b)=>b.area-a.area);
-  for(const it of closed){
+  const sorted=visibleItems.slice().sort((a,b)=>a.height-b.height);
+  const distinctLevels=[...new Set(sorted.map(it=>it.height))].sort((a,b)=>a-b);
+
+  for(const it of sorted){
     const z=it.height*HEIGHT_SCALE;
-    const parentZ=it.parentContour?it.parentContour.height*HEIGHT_SCALE:minHeight;
-    addTerrainMesh(group,buildTerraceTopGeometry(it),heightColorForItem(it),z);
-    const dz=z-parentZ;
+    const region=chooseHighSideRegion(it,bounds);
+    if(region?.geometry){
+      addTerrainMesh(group,region.geometry,heightColorForItem(it),z);
+    }
+
+    // 段差壁は必ず等圧線そのものの位置。
+    let lower=minHeight;
+    for(const h of distinctLevels){
+      if(h<it.height) lower=Math.max(lower,h*HEIGHT_SCALE);
+      else break;
+    }
+    const dz=z-lower;
     if(Math.abs(dz)>.01){
       addTerrainMesh(
-        group,buildCurtainGeometry(it.pathPoints,true),heightColorForItem(it),
-        Math.min(z,parentZ),Math.abs(dz)
+        group,
+        buildCurtainGeometry(it.pathPoints,it.isClosed),
+        heightColorForItem(it),
+        Math.min(z,lower),
+        Math.abs(dz)
       );
     }
   }
-
-  // 上下左右の地図外枠まで伸びる等圧線を含め、開いた等圧線にも面を張る。
-  addOpenContourTerrain(group,visibleItems.filter(it=>!it.isClosed),bounds,minHeight,maxH);
 
   return group;
 }
@@ -1522,7 +1534,7 @@ async function loadSVGFromString(svgText){
   if (ui.autoMode.checked) applyAutoHeights();
   buildList(true);
   updateHeightsAndColors();
-  fitView(chartGroup);
+  setDefaultObliqueView();
 }
 
 /* ==== ラベル推定 ==== */
@@ -1650,6 +1662,8 @@ function assignSymbolAwarePressure(){
       level+=step;
     }
     raw[i].it.pressure=level;
+    raw[i].it.pressureCenter=raw[i].strongest||null;
+    raw[i].it.pressureSign=raw[i].strongest?.sign||0;
     const symbol=raw[i].strongest?raw[i].strongest.label:'';
     const spacing=raw[i].it.isobarKind==='aux'?'2hPa補助線':'4hPa等圧線';
     raw[i].it.pressureSource=(symbol+' '+spacing).trim();
@@ -1661,6 +1675,7 @@ function assignSymbolAwarePressure(){
   ui.labelInfo.textContent='H:'+highs+' / L系:'+lows+' / 補助2hPa:'+aux;
 }
 async function assignPressuresFromLabelsOrAreas(){
+  const centers=readPressureCenters(lastRawSvgText);
   const labs=readPressureLabels(lastRawSvgText);
   if(labs.length){
     for(const it of items){
@@ -1672,6 +1687,15 @@ async function assignPressuresFromLabelsOrAreas(){
       }
       it.pressure=best?best.value:undefined;
       it.pressureSource='気圧値ラベル';
+
+      let strongest=null,strongestInfluence=-Infinity;
+      for(const center of centers){
+        const d=Math.sqrt(pointToPolylineDistance2(center,it.pathPoints))+18;
+        const influence=1/d;
+        if(influence>strongestInfluence){strongestInfluence=influence;strongest=center;}
+      }
+      it.pressureCenter=strongest;
+      it.pressureSign=strongest?.sign||0;
     }
     ui.labelInfo.textContent='気圧値ラベル: '+labs.length+'個';
   }else{
@@ -2236,7 +2260,7 @@ async function loadProjectSVG(svgText){
 
   buildList(true);
   updateHeightsAndColors();
-  fitView(chartGroup);
+  setDefaultObliqueView();
 }
 
 /* ==== メニュー ==== */
@@ -2283,7 +2307,7 @@ ui.fileRaw.addEventListener('change', async (e)=>{
     }
     const only=extractIsobarsOnly(raw);
     await loadSVGFromString(only);
-    fitView(chartGroup);
+    setDefaultObliqueView();
   }catch(err){ console.error('読み込みエラー',err); }
 });
 ui.fileSaved.addEventListener('change', async (e)=>{
@@ -2515,7 +2539,7 @@ async function loadJmaDirect(){
 
     const only=extractIsobarsOnly(svgText);
     await loadSVGFromString(only);
-    fitView(chartGroup);
+    setDefaultObliqueView();
 
     setJmaStatus(`気象庁SVGを読み込みました：${label}`);
     console.info('JMA SVG source:',url);
@@ -2638,7 +2662,7 @@ ui.bgColor.addEventListener('input',e=>{
 });
 ui.basisVisible.addEventListener('change', e=>{ basis.visible=e.target.checked; });
 ui.gridVisible.addEventListener('change', e=>{ const v=e.target.checked; gridXY.visible=v; gridZX.visible=v; });
-ui.viewSelect.addEventListener('change', e=>{ const v=e.target.value; if(v==='top') viewTop(); else if(v==='front') viewFront(); else if(v==='side') viewSide(); else fitView(chartGroup); });
+ui.viewSelect.addEventListener('change', e=>{ const v=e.target.value; if(v==='top') viewTop(); else if(v==='front') viewFront(); else if(v==='side') viewSide(); else setDefaultObliqueView(); });
 ui.projection.addEventListener('change', e=>{ (e.target.value==='ortho')?useOrthographic():usePerspective(); fitView(chartGroup); });
 ui.panelToggle.addEventListener('click',()=>{
   const open=ui.app.getAttribute('data-panel')!=='closed';
