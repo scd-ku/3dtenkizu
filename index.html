@@ -1086,27 +1086,6 @@ function buildBandBetweenContours(aItem,bItem,z){
   return g;
 }
 
-function makeTerrainMaterial(color){
-  const opacity=displayOpacity();
-  const opts={
-    color,transparent:opacity<.999,opacity,side:THREE.DoubleSide,
-    depthWrite:opacity>.65,polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1
-  };
-  return rendererMode==='webgl'
-    ? new THREE.MeshStandardMaterial({...opts,roughness:.84,metalness:0,flatShading:true})
-    : new THREE.MeshBasicMaterial(opts);
-}
-
-function addTerrainMesh(group,geometry,color,z=0,scaleZ=1){
-  if(!geometry?.getAttribute?.('position') || geometry.getAttribute('position').count<3) return null;
-  const mesh=new THREE.Mesh(geometry,makeTerrainMaterial(color));
-  mesh.position.z=z;
-  mesh.scale.z=scaleZ;
-  mesh.renderOrder=-2;
-  group.add(mesh);
-  return mesh;
-}
-
 function buildBasePlateGeometry(bounds,rootClosed){
   const pad=Math.max(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY)*0.015;
   let outer=[
