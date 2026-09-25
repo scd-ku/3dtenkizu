@@ -42,8 +42,15 @@
     letter-spacing:.01em;
   }
 
-  #app{display:grid;grid-template-columns:1fr 420px;grid-template-rows:72px 1fr;height:100%}
-  #app[data-panel="closed"]{grid-template-columns:1fr 0}
+  #app{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) 390px;
+    grid-template-rows:auto minmax(0,1fr);
+    height:100dvh;
+    min-height:0;
+    overflow:hidden
+  }
+  #app[data-panel="closed"]{grid-template-columns:minmax(0,1fr) 0}
 
   /* ヘッダー：カラフルで元気に */
   header{
@@ -81,7 +88,10 @@
   #panelToggle[data-open="false"]::after{content:" ▶"}
 
   /* ビューア */
-  #viewer{position:relative;background:#fff;border-top:1px solid var(--border)}
+  #viewer{
+    position:relative;background:#fff;border-top:1px solid var(--border);
+    min-width:0;min-height:0;overflow:hidden
+  }
   #c{width:100%;height:100%;display:block;position:relative;z-index:1}
   #fallbackWeather{
     position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
@@ -107,12 +117,16 @@
 
   /* サイドバー */
   #sidebar{
-    background:var(--panel);border-left:1px solid var(--border);overflow:auto;padding:1rem .9rem
+    background:var(--panel);border-left:1px solid var(--border);
+    overflow:auto;min-height:0;padding:.85rem .8rem
   }
   #app[data-panel="closed"] #sidebar{display:none}
   .section{margin-bottom:1rem}
-  .section h2{font-size:14px;margin:.4rem 0 .2rem;font-weight:800;display:flex;align-items:center;gap:.4rem}
-  .section h2 .emo{opacity:.9}
+  .section h2{
+    font-size:14px;margin:.4rem 0 .35rem;font-weight:800;
+    display:flex;align-items:center;gap:.45rem;color:#2563a8
+  }
+  .sectionIcon{width:18px;height:18px;flex:0 0 auto;color:#3978ad}
 
   .row{display:grid;grid-template-columns:1fr auto;gap:.7rem;align-items:center;margin:.5rem 0}
   .row label{font-size:13px;color:var(--muted)}
@@ -278,8 +292,9 @@
         <option value="18">18時</option>
         <option value="21">21時</option>
       </select>
-      <button id="jmaLoadBtn" type="button">読み込む</button>
-      <a id="jmaArchiveLink" href="https://www.data.jma.go.jp/yoho/wxchart/quickmonthly.html" target="_blank" rel="noopener noreferrer" title="気象庁の過去の実況天気図">元データ</a>
+      <button id="jmaLoadBtn" type="button">気象庁SVGを読み込む</button>
+      <button id="openSvgBtn" type="button">手元のSVGを開く</button>
+      <a id="jmaArchiveLink" href="https://www.data.jma.go.jp/yoho/wxchart/quickdaily.html" target="_blank" rel="noopener noreferrer" title="気象庁の1日表示">元データ</a>
     </div>
   </header>
 
@@ -295,7 +310,15 @@
 
   <aside id="sidebar">
     <div class="section">
-      <h2><span class="emo">⚙️</span> 全体設定</h2>
+      <h2>
+        <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+            <path d="M4 6h10M18 6h2M4 12h3M11 12h9M4 18h8M16 18h4"></path>
+            <circle cx="16" cy="6" r="2"></circle><circle cx="9" cy="12" r="2"></circle><circle cx="14" cy="18" r="2"></circle>
+          </g>
+        </svg>
+        全体設定
+      </h2>
       <div class="row"><label>背景色</label><input id="bgColor" type="color" value="#dff0ff"></div>
       <div class="row"><label>基準（軸＆キューブ）</label><input id="basisVisible" type="checkbox" checked></div>
       <div class="row"><label>グリッド（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
@@ -305,14 +328,30 @@
     </div>
 
     <div class="section">
-      <h2><span class="emo">🗺️</span> 天気図画像（下敷き）</h2>
+      <h2>
+        <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+            <rect x="3.5" y="4" width="17" height="16" rx="2"></rect>
+            <path d="M6 16l4-4 3 3 2-2 3 3M8 8.5h.01"></path>
+          </g>
+        </svg>
+        天気図画像（下敷き）
+      </h2>
       <div class="row"><label>表示する</label><input id="imgVisible" type="checkbox" checked></div>
       <div class="row"><label>不透明度</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.9"></div>
       <div class="row"><label>高さ（Zオフセット）</label><input id="imgHeight" type="range" min="-200" max="200" step="0.1" value="-0.1"></div>
     </div>
 
     <div class="section">
-      <h2><span class="emo">🤖</span> 自動高さ（ラベル順）</h2>
+      <h2>
+        <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 18h14M7 15l3-3 3 2 4-6"></path>
+            <path d="M15 8h2v2"></path>
+          </g>
+        </svg>
+        自動高さ（ラベル順）
+      </h2>
       <div class="row"><label>自動高さを使う</label><input id="autoMode" type="checkbox"></div>
       <div class="row"><label>間隔倍率</label><input id="gapFactor" type="range" min="0.2" max="3" step="0.05" value="1"></div>
       <div class="row"><label>平坦 ←→ 初期間隔</label><input id="autoBlend" type="range" min="0" max="1" step="0.01" value="1"></div>
@@ -320,7 +359,14 @@
     </div>
 
     <div class="section">
-      <h2><span class="emo">🧵</span> 等圧線リスト</h2>
+      <h2>
+        <svg class="sectionIcon" viewBox="0 0 24 24" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+            <path d="M3 7c3-3 6 3 9 0s6 3 9 0M3 12c3-3 6 3 9 0s6 3 9 0M3 17c3-3 6 3 9 0s6 3 9 0"></path>
+          </g>
+        </svg>
+        等圧線リスト
+      </h2>
       <div id="list"></div>
     </div>
   </aside>
@@ -341,7 +387,7 @@
     <h2 id="helpTitle">3D天気図の使い方</h2>
 
     <h3>1. 気象庁の天気図を読み込む</h3>
-    <p>日付と時刻（日本時間）を選び、「読み込む」を押します。ベクトル版（SVG/SVGZ）が取得できる場合は、そのまま等圧線を3D化します。ベクトル版がない場合はPNG天気図を下敷きとして表示します。</p>
+    <p>日付と時刻（日本時間）を選び、「気象庁SVGを読み込む」を押します。アプリは気象庁の「過去の実況天気図（1日表示）」を参照し、その時刻のカラーSVGリンクを探して直接読み込み、等圧線を3D化します。手元に保存したSVG/SVGZは「手元のSVGを開く」から読み込めます。</p>
 
     <h3>2. 3D表示を操作する</h3>
     <ul>
@@ -402,6 +448,7 @@ const ui = {
   jmaDate: document.getElementById('jmaDate'),
   jmaTime: document.getElementById('jmaTime'),
   jmaLoadBtn: document.getElementById('jmaLoadBtn'),
+  openSvgBtn: document.getElementById('openSvgBtn'),
   jmaStatus: document.getElementById('jmaStatus'),
   jmaArchiveLink: document.getElementById('jmaArchiveLink'),
   qrBtn: document.getElementById('qrBtn'),
@@ -475,7 +522,7 @@ scene.background = rendererMode==='webgl' ? new THREE.Color(ui.bgColor.value) : 
 let controls, camera;
 const perspCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 50000);
 perspCamera.up.set(0,0,1);
-perspCamera.position.set(450,300,200);
+perspCamera.position.set(360,260,180);
 
 const orthoCamera = new THREE.OrthographicCamera(-500,500,500,-500,-50000,50000);
 orthoCamera.up.set(0,0,1);
@@ -558,7 +605,7 @@ function fitView(target=chartGroup){
   _target.copy(cen);
   if(camera.isPerspectiveCamera){
     const maxDim=Math.max(sz.x,sz.y,sz.z);
-    const dist=maxDim*1.2/Math.tan(THREE.MathUtils.degToRad(perspCamera.fov*0.5));
+    const dist=maxDim*0.95/Math.tan(THREE.MathUtils.degToRad(perspCamera.fov*0.5));
     const dir=new THREE.Vector3(.75,.55,.35).normalize();
     camera.position.copy(cen.clone().add(dir.multiplyScalar(dist)));
     camera.near=Math.max(.1,dist/1000); camera.far=dist*1000; camera.updateProjectionMatrix();
@@ -1242,101 +1289,142 @@ function selectedJstToUtcInfo(){
   };
 }
 
+function selectedDateKey(){
+  return (ui.jmaDate.value||'').replaceAll('-','');
+}
 function updateJmaArchiveLink(){
-  const ym=(ui.jmaDate.value||'').replace('-','').slice(0,6);
-  ui.jmaArchiveLink.href = ym
-    ? `https://www.data.jma.go.jp/yoho/wxchart/quickmonthly.html?show=${ym}`
-    : 'https://www.data.jma.go.jp/yoho/wxchart/quickmonthly.html';
+  const day=selectedDateKey();
+  ui.jmaArchiveLink.href = day
+    ? `https://www.data.jma.go.jp/yoho/wxchart/quickdaily.html?show=${day}`
+    : 'https://www.data.jma.go.jp/yoho/wxchart/quickdaily.html';
+}
+
+async function discoverJmaSvgUrl(){
+  const day=selectedDateKey();
+  const hour=pad2(Number(ui.jmaTime.value));
+  if(!day) throw new Error('日付を選択してください。');
+
+  const pageUrl=`https://www.data.jma.go.jp/yoho/wxchart/quickdaily.html?show=${day}`;
+
+  // まず気象庁の1日表示ページそのものから、該当時刻のカラーSVGリンクを探す。
+  // これにより実ファイル名を推測せず、気象庁ページの現在の構成に追従する。
+  try{
+    const res=await fetch(pageUrl,{cache:'no-store',mode:'cors'});
+    if(res.ok){
+      const html=await res.text();
+      const doc=new DOMParser().parseFromString(html,'text/html');
+      const anchors=[...doc.querySelectorAll('a[href]')];
+
+      const svgAnchors=anchors.filter(a=>{
+        const href=a.getAttribute('href')||'';
+        return /\.svg(?:z)?(?:$|[?#])/i.test(href);
+      });
+
+      // 日本周辺域（SPAS）・カラー・指定時刻を最優先。
+      const scored=svgAnchors.map(a=>{
+        const href=a.getAttribute('href')||'';
+        const row=(a.closest('tr')?.textContent||'').replace(/\s+/g,' ');
+        const context=(a.parentElement?.textContent||'')+' '+row+' '+href;
+        let score=0;
+        if(/SPAS/i.test(context)) score+=20;
+        if(/COLOR/i.test(context)) score+=15;
+        if(new RegExp(`${hour}時`).test(row)) score+=25;
+        if(new RegExp(`${day}.*${hour}`).test(href.replace(/\D/g,''))) score+=20;
+        if(/\.svg(?:$|[?#])/i.test(href)) score+=5;
+        return {a,href,row,score};
+      }).sort((x,y)=>y.score-x.score);
+
+      if(scored.length && scored[0].score>0){
+        return {
+          url:new URL(scored[0].href,pageUrl).href,
+          pageUrl,
+          discovered:true
+        };
+      }
+
+      // hrefがJavaScriptで後生成されるページにも対応し、HTML/スクリプト中のSPAS_COLOR SVG文字列を探す。
+      const re=/((?:https?:\/\/[^"'<>\s]+)?[^"'<>\s]*SPAS_COLOR_[0-9]{12,14}\.svgz?)/ig;
+      const matches=[...html.matchAll(re)].map(m=>m[1]);
+      const hhKey=`${day}${hour}`;
+      const best=matches.find(x=>x.replace(/\D/g,'').includes(hhKey)) || matches[0];
+      if(best){
+        return {url:new URL(best,pageUrl).href,pageUrl,discovered:true};
+      }
+    }
+  }catch(err){
+    console.warn('quickdaily page discovery failed:',err);
+  }
+
+  // HTML取得がCORSで許可されない場合だけ、既知の候補を試す。
+  // quickdailyの表示時刻は日本時間なので、JST日時とUTC日時の両方を候補にする。
+  const [y,m,d]=ui.jmaDate.value.split('-').map(Number);
+  const jstHour=Number(ui.jmaTime.value);
+  const jst12=`${y}${pad2(m)}${pad2(d)}${pad2(jstHour)}00`;
+
+  const utc=new Date(Date.UTC(y,m-1,d,jstHour-9,0,0));
+  const utc12=`${utc.getUTCFullYear()}${pad2(utc.getUTCMonth()+1)}${pad2(utc.getUTCDate())}${pad2(utc.getUTCHours())}00`;
+
+  const ym=`${y}${pad2(m)}`;
+  const bases=[
+    'https://www.data.jma.go.jp/yoho/data/wxchart/quick',
+    'https://www.data.jma.go.jp/fcd/yoho/data/wxchart/quick'
+  ];
+  const candidates=[];
+  for(const base of bases){
+    for(const stamp of [jst12,utc12]){
+      candidates.push(
+        `${base}/${ym}/SPAS_COLOR_${stamp}.svg`,
+        `${base}/${ym}/SPAS_COLOR_${stamp}.svgz`
+      );
+    }
+  }
+
+  for(const url of candidates){
+    try{
+      const res=await fetch(url,{cache:'no-store',mode:'cors'});
+      if(res.ok) return {url,pageUrl,discovered:false,response:res};
+    }catch{}
+  }
+
+  throw new Error('この時刻のSVGリンクを気象庁ページから取得できませんでした。');
+}
+
+async function fetchSvgTextFromUrl(url,preloadedResponse=null){
+  const res=preloadedResponse || await fetch(url,{cache:'no-store',mode:'cors'});
+  if(!res.ok) throw new Error(`SVG取得 HTTP ${res.status}`);
+
+  if(/\.svgz(?:$|[?#])/i.test(url)){
+    const u8=new Uint8Array(await res.arrayBuffer());
+    for(const fn of [
+      ()=>pako.ungzip(u8),
+      ()=>pako.inflate(u8),
+      ()=>pako.inflateRaw(u8)
+    ]){
+      try{
+        const text=new TextDecoder('utf-8').decode(fn());
+        if(text.includes('<svg')) return text;
+      }catch{}
+    }
+    throw new Error('SVGZを展開できませんでした。');
+  }
+
+  const text=await res.text();
+  if(!text.includes('<svg')) throw new Error('取得したファイルがSVGではありません。');
+  return text;
 }
 
 async function fetchJmaChart(){
   const info=selectedJstToUtcInfo();
-
-  // 気象庁の公開アーカイブは /yoho/data/wxchart/quick/ 以下。
-  // 現行のファイル名は YYYYMMDDHHMM の12桁が基本だが、互換のため14桁も試す。
-  const stems=[
-    `SPAS_COLOR_${info.timestamp12}`,
-    `SPAS_COLOR_${info.timestamp14}`
-  ];
-  const candidates=[];
-  for(const stem of stems){
-    candidates.push(
-      {url:`${JMA_QUICK_BASE}/${info.yyyymm}/${stem}.svg`,type:'svg'},
-      {url:`${JMA_QUICK_BASE}/${info.yyyymm}/${stem}.svgz`,type:'svgz'}
-    );
-  }
-
-  let lastError=null;
-  for(const candidate of candidates){
-    try{
-      const res=await fetch(candidate.url,{cache:'no-store',mode:'cors'});
-      if(!res.ok){
-        lastError=new Error(`HTTP ${res.status}`);
-        continue;
-      }
-
-      if(candidate.type==='svg'){
-        const svgText=await res.text();
-        if(svgText.includes('<svg')){
-          return {kind:'svg',svgText,url:candidate.url,label:info.label};
-        }
-        lastError=new Error('SVGとして解釈できませんでした');
-        continue;
-      }
-
-      const u8=new Uint8Array(await res.arrayBuffer());
-      let svgText='';
-      try{
-        svgText=new TextDecoder('utf-8').decode(pako.ungzip(u8));
-      }catch(e1){
-        try{
-          svgText=new TextDecoder('utf-8').decode(pako.inflate(u8));
-        }catch(e2){
-          try{
-            svgText=new TextDecoder('utf-8').decode(pako.inflateRaw(u8));
-          }catch(e3){
-            lastError=new Error('SVGZの展開に失敗しました');
-            continue;
-          }
-        }
-      }
-      if(svgText.includes('<svg')){
-        return {kind:'svg',svgText,url:candidate.url,label:info.label};
-      }
-    }catch(err){
-      lastError=err;
-    }
-  }
-
-  // ベクトル版が取得できない場合、少なくとも天気図自体を表示できるようPNGも試す。
-  for(const stem of stems){
-    const url=`${JMA_QUICK_BASE}/${info.yyyymm}/${stem}.png`;
-    try{
-      const res=await fetch(url,{cache:'no-store',mode:'cors'});
-      if(!res.ok){ lastError=new Error(`HTTP ${res.status}`); continue; }
-      const blob=await res.blob();
-      return {kind:'png',blob,url,label:info.label};
-    }catch(err){
-      lastError=err;
-    }
-  }
-
-  throw new Error(lastError?.message || '該当する天気図が見つかりませんでした');
-}
-
-async function showPngFallback(blob,label,url){
-  const objectUrl=URL.createObjectURL(blob);
-  ui.fallbackWeather.src=objectUrl;
-  ui.fallbackWeather.style.display='block';
-  ui.fallbackWeather.style.opacity=String(parseFloat(ui.imgOpacity.value));
-
-  // PNGでは等圧線ベクトルがないため3D線は消し、下敷きだけ表示する。
-  rootLines.clear();
-  items=[];
-  ui.list.innerHTML='';
-  ui.labelInfo.textContent='PNG表示：等圧線ベクトルなし';
-  setJmaStatus(`天気図を表示しました：${label}（PNGのため3D等圧線は生成されません）`);
-  console.info('JMA PNG source:',url);
+  const found=await discoverJmaSvgUrl();
+  const svgText=await fetchSvgTextFromUrl(found.url,found.response||null);
+  return {
+    kind:'svg',
+    svgText,
+    url:found.url,
+    label:info.label,
+    pageUrl:found.pageUrl,
+    discovered:found.discovered
+  };
 }
 
 async function loadJmaDirect(){
@@ -1344,12 +1432,6 @@ async function loadJmaDirect(){
   setJmaStatus('気象庁から天気図を読み込んでいます…');
   try{
     const result=await fetchJmaChart();
-
-    if(result.kind==='png'){
-      await showPngFallback(result.blob,result.label,result.url);
-      return;
-    }
-
     const {svgText,url,label}=result;
     const doc=new DOMParser().parseFromString(svgText,'image/svg+xml');
     const svg=doc.querySelector('svg');
@@ -1364,12 +1446,12 @@ async function loadJmaDirect(){
     await loadSVGFromString(only);
     fitView(chartGroup);
 
-    setJmaStatus(`読み込み完了：${label}`);
-    console.info('JMA vector source:',url);
+    setJmaStatus(`気象庁SVGを読み込みました：${label}`);
+    console.info('JMA SVG source:',url);
   }catch(err){
     console.error('JMA direct load error',err);
     setJmaStatus(
-      `該当する天気図を取得できませんでした。公開前の場合は一つ前の時刻を選んでください。「元データ」から気象庁の公開状況も確認できます。（${err.message}）`,
+      `SVGを取得できませんでした。「元データ」を開くと、気象庁の1日表示ページで同じ日付のSVGリンクを確認できます。（${err.message}）`,
       true
     );
   }finally{
@@ -1378,6 +1460,7 @@ async function loadJmaDirect(){
 }
 
 ui.jmaLoadBtn.addEventListener('click',loadJmaDirect);
+ui.openSvgBtn.addEventListener('click',()=>ui.fileRaw.click());
 ui.jmaDate.addEventListener('change',updateJmaArchiveLink);
 setDefaultJmaDateTime();
 if(rendererMode==='svg'){
