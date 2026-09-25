@@ -1409,29 +1409,127 @@ function pointInMultiPolygonXY(point,mp){
   }
   return false;
 }
+function almostSameXY(a,b,eps=1e-5){
+  return Math.hypot(a[0]-b[0],a[1]-b[1])<=eps;
+}
+function sanitizeLineCoords(coords,bounds,{close=false}={}){
+  if(!Array.isArray(coords)) return [];
+  const out=[];
+  const eps=Math.max(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY)*1e-6;
+
+  for(const raw of coords){
+    if(!raw||!Number.isFinite(raw[0])||!Number.isFinite(raw[1])) continue;
+    // 立体面は天気図の矩形内だけで生成するため、線も外枠内へ制限する。
+    const p=[
+      THREE.MathUtils.clamp(raw[0],bounds.minX,bounds.maxX),
+      THREE.MathUtils.clamp(raw[1],bounds.minY,bounds.maxY)
+    ];
+    if(out.length&&almostSameXY(out[out.length-1],p,eps)) continue;
+
+    // A-B-A のような即時折返しは2辺だけの無効リングを作るため除去。
+    if(out.length>=2&&almostSameXY(out[out.length-2],p,eps)){
+      out.pop();
+      continue;
+    }
+    out.push(p);
+  }
+
+  if(close){
+    if(out.length<3) return [];
+    if(!almostSameXY(out[0],out[out.length-1],eps)) out.push([...out[0]]);
+    const unique=out.slice(0,-1).filter((p,i,a)=>a.findIndex(q=>almostSameXY(p,q,eps))===i);
+    if(unique.length<3) return [];
+  }else if(out.length<2){
+    return [];
+  }
+
+  let length=0;
+  for(let i=1;i<out.length;i++) length+=Math.hypot(out[i][0]-out[i-1][0],out[i][1]-out[i-1][1]);
+  if(length<eps*10) return [];
+  return out;
+}
 function contourLineForPolygonize(it,bounds){
   let pts=decimatePoints(it.pathPoints,220).map(p=>[p.x,p.y]);
   if(pts.length<2) return null;
 
   if(it.isClosed){
-    const first=pts[0],last=pts[pts.length-1];
-    if(Math.hypot(first[0]-last[0],first[1]-last[1])>1e-6){
-      pts.push([first[0],first[1]]);
-    }
-    return pts;
+    pts=sanitizeLineCoords(pts,bounds,{close:true});
+    return pts.length>=4?{coords:pts,open:false,frameNodes:[]}:null;
   }
 
-  // 開いている等圧線は、両端を必ず天気図外枠の最寄点まで延長する。
-  // その外枠と他の等圧線を合わせて polygonize することで面を閉じる。
+  // 開いている等圧線は両端を天気図外枠の最寄点へ延長する。
   const firstV=new THREE.Vector3(pts[0][0],pts[0][1],0);
   const lastV=new THREE.Vector3(pts[pts.length-1][0],pts[pts.length-1][1],0);
-  const a=boundarySnap(firstV,bounds).p;
-  const b=boundarySnap(lastV,bounds).p;
+  const a=boundarySnap(firstV,bounds);
+  const b=boundarySnap(lastV,bounds);
 
-  const out=[[a.x,a.y],...pts,[b.x,b.y]];
-  // 連続する同一点を除く。
-  return out.filter((p,i,arr)=>i===0||Math.hypot(p[0]-arr[i-1][0],p[1]-arr[i-1][1])>1e-7);
+  pts=sanitizeLineCoords([[a.p.x,a.p.y],...pts,[b.p.x,b.p.y]],bounds,{close:false});
+  if(pts.length<2) return null;
+
+  return {
+    coords:pts,
+    open:true,
+    frameNodes:[
+      {t:a.t,coord:[a.p.x,a.p.y]},
+      {t:b.t,coord:[b.p.x,b.p.y]}
+    ]
+  };
 }
+function buildNodedFrameFeatures(bounds,frameNodes){
+  const w=bounds.maxX-bounds.minX,h=bounds.maxY-bounds.minY;
+  const P=2*(w+h);
+  const eps=P*1e-8;
+
+  // 四隅と、すべての開いた等圧線の接続点を外枠の頂点にする。
+  const nodes=[
+    {t:0,coord:[bounds.minX,bounds.maxY]},
+    {t:w,coord:[bounds.maxX,bounds.maxY]},
+    {t:w+h,coord:[bounds.maxX,bounds.minY]},
+    {t:2*w+h,coord:[bounds.minX,bounds.minY]},
+    ...frameNodes
+  ].map(n=>({t:((n.t%P)+P)%P,coord:n.coord}));
+
+  nodes.sort((a,b)=>a.t-b.t);
+  const unique=[];
+  for(const n of nodes){
+    if(!unique.length||Math.abs(n.t-unique[unique.length-1].t)>eps) unique.push(n);
+  }
+
+  if(unique.length<2){
+    return [turf.lineString([
+      [bounds.minX,bounds.maxY],
+      [bounds.maxX,bounds.maxY],
+      [bounds.maxX,bounds.minY],
+      [bounds.minX,bounds.minY],
+      [bounds.minX,bounds.maxY]
+    ],{kind:'frame'})];
+  }
+
+  const features=[];
+  for(let i=0;i<unique.length;i++){
+    const a=unique[i];
+    const b=unique[(i+1)%unique.length];
+    let bt=b.t;
+    if(i===unique.length-1) bt+=P;
+
+    const coords=[[...a.coord]];
+    const cornerTs=[w,w+h,2*w+h,P,w+P,w+h+P,2*w+h+P];
+    for(const t of cornerTs){
+      if(t>a.t+eps&&t<bt-eps){
+        const p=perimeterPoint(t,bounds);
+        coords.push([p.x,p.y]);
+      }
+    }
+    coords.push([...b.coord]);
+
+    const clean=sanitizeLineCoords(coords,bounds,{close:false});
+    if(clean.length>=2&&!almostSameXY(clean[0],clean[clean.length-1],eps)){
+      features.push(turf.lineString(clean,{kind:'frame'}));
+    }
+  }
+  return features;
+}
+
 function turfPolygonToShapeGeometry(feature){
   const coords=feature?.geometry?.coordinates;
   if(!coords?.length) return null;
@@ -1479,47 +1577,51 @@ function buildExactContourTerrain(){
     region:highSideMultiPolygon(it,bounds)
   }));
 
-  // 天気図の矩形外枠と全等圧線を一つの線網にする。
-  const lineFeatures=[];
-  lineFeatures.push(turf.lineString([
-    [bounds.minX,bounds.minY],
-    [bounds.maxX,bounds.minY],
-    [bounds.maxX,bounds.maxY],
-    [bounds.minX,bounds.maxY],
-    [bounds.minX,bounds.minY]
-  ],{kind:'frame'}));
-
+  // 天気図外枠と全等圧線を、接続点を共有する完全にノード化された線網にする。
+  const contourFeatures=[];
+  const frameNodes=[];
   for(const it of visibleItems){
-    const coords=contourLineForPolygonize(it,bounds);
-    if(!coords||coords.length<2) continue;
+    const line=contourLineForPolygonize(it,bounds);
+    if(!line?.coords?.length) continue;
     try{
-      lineFeatures.push(turf.lineString(coords,{kind:'isobar'}));
+      contourFeatures.push(turf.lineString(line.coords,{kind:'isobar'}));
+      if(line.open) frameNodes.push(...line.frameNodes);
     }catch(err){
       console.warn('contour line creation failed',err);
     }
   }
+  const frameFeatures=buildNodedFrameFeatures(bounds,frameNodes);
+  const lineFeatures=[...frameFeatures,...contourFeatures];
 
   let cells;
   try{
-    cells=turf.polygonize(turf.featureCollection(lineFeatures));
+    const cleaned=lineFeatures.map(f=>turf.cleanCoords(f));
+    cells=turf.polygonize(turf.featureCollection(cleaned));
   }catch(err){
     console.error('terrain polygonize failed',err);
-    return group;
+    // 立体表示全体を消さず、少なくとも等圧線の垂直面は残す。
+    cells=turf.featureCollection([]);
   }
 
   // polygonize で得た各面に、その位置で成立する最も高い等圧線レベルを割り当てる。
   // これにより水平面の境界は必ず元の等圧線になる。
   const cellInfos=[];
   for(const feature of (cells.features||[])){
+    const outer=feature.geometry?.coordinates?.[0]||[];
+    const distinct=outer.filter((p,i,a)=>a.findIndex(q=>almostSameXY(p,q,1e-6))===i);
+    if(outer.length<4||distinct.length<3) continue;
+
     let sample;
     try{
       const pf=turf.pointOnFeature(feature);
       sample={x:pf.geometry.coordinates[0],y:pf.geometry.coordinates[1]};
     }catch{
-      const ring=feature.geometry?.coordinates?.[0]||[];
-      if(!ring.length) continue;
-      sample={x:ring[0][0],y:ring[0][1]};
+      if(!outer.length) continue;
+      sample={x:outer[0][0],y:outer[0][1]};
     }
+
+    if(sample.x<bounds.minX-1e-6||sample.x>bounds.maxX+1e-6||
+       sample.y<bounds.minY-1e-6||sample.y>bounds.maxY+1e-6) continue;
 
     let h=minHeight/HEIGHT_SCALE;
     for(const entry of sideRegions){
