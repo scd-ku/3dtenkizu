@@ -1068,11 +1068,8 @@ function bindViewCubeDrag(){
       pointerId:e.pointerId,
       x:e.clientX,y:e.clientY,
       startX:e.clientX,startY:e.clientY,
-      moved:false
+      moved:false,captured:false
     };
-    ui.viewCubeScene.classList.add('dragging');
-    try{ui.viewCubeScene.setPointerCapture(e.pointerId);}catch{}
-    e.preventDefault();
   });
 
   ui.viewCubeScene.addEventListener('pointermove',e=>{
@@ -1081,7 +1078,14 @@ function bindViewCubeDrag(){
     const dy=e.clientY-cubeDragState.y;
     const total=Math.hypot(e.clientX-cubeDragState.startX,e.clientY-cubeDragState.startY);
 
-    if(total>3) cubeDragState.moved=true;
+    if(total>3&&!cubeDragState.moved){
+      cubeDragState.moved=true;
+      ui.viewCubeScene.classList.add('dragging');
+      try{
+        ui.viewCubeScene.setPointerCapture(e.pointerId);
+        cubeDragState.captured=true;
+      }catch{}
+    }
     if(cubeDragState.moved){
       orbitCameraFromCube(dx,dy);
       cubeDragState.x=e.clientX;
@@ -1093,9 +1097,12 @@ function bindViewCubeDrag(){
   const finish=e=>{
     if(!cubeDragState||e.pointerId!==cubeDragState.pointerId) return;
     if(cubeDragState.moved) cubeSuppressClickUntil=performance.now()+180;
+    const captured=cubeDragState.captured;
     cubeDragState=null;
     ui.viewCubeScene.classList.remove('dragging');
-    try{ui.viewCubeScene.releasePointerCapture(e.pointerId);}catch{}
+    if(captured){
+      try{ui.viewCubeScene.releasePointerCapture(e.pointerId);}catch{}
+    }
   };
   ui.viewCubeScene.addEventListener('pointerup',finish);
   ui.viewCubeScene.addEventListener('pointercancel',finish);
