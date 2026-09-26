@@ -81,6 +81,12 @@
   }
   .sunLineIcon{width:24px;height:24px;flex:0 0 auto}
   .headerActions{display:flex;align-items:center;gap:.35rem;flex-wrap:nowrap;justify-content:flex-end;white-space:nowrap}
+  .headerPictBtn,.sourceTitle,.controlGroup .groupLabel{display:inline-flex;align-items:center;gap:.38rem}
+  .headerPict{
+    width:16px;height:16px;flex:0 0 auto;fill:none;stroke:currentColor;
+    stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round
+  }
+  .sourceTitle .headerPict{width:17px;height:17px;color:#2563a8}
   .controlGroup{display:flex;align-items:center;gap:.35rem;padding:.2rem;border:1px solid var(--border);border-radius:.7rem;background:#f8fafc}
   .controlGroup .groupLabel{font-size:11px;color:#64748b;padding-left:.35rem}
   header a{font-size:13px;color:var(--accent);text-decoration:none}
@@ -139,19 +145,31 @@
   .section{margin-bottom:1rem}
   .section h2{
     font-size:14px;margin:.25rem 0 .45rem;font-weight:800;
-    display:flex;align-items:center;gap:.5rem;color:#fff;
-    background:#2563a8;padding:.52rem .62rem;border-radius:.72rem
+    display:flex;align-items:center;gap:.5rem;color:#2563a8;
+    background:#fff;padding:.5rem .58rem;border:1px solid #dbeafe;border-radius:.72rem
   }
   .sectionIcon{width:18px;height:18px;flex:0 0 auto;color:currentColor}
   .section.collapsible>h2{cursor:pointer;user-select:none}
-  .section.collapsible>h2:hover{background:#1f6598}
+  .section.collapsible>h2:hover{background:#f0f7ff}
+  .section[data-section="overall"]>h2,
+  .section[data-section="display"]>h2{
+    color:#fff;background:#2563a8;border-color:#2563a8
+  }
+  .section[data-section="overall"]>h2:hover,
+  .section[data-section="display"]>h2:hover{background:#1f6598}
   .section.collapsible>h2::after{
-    content:"▼";margin-left:auto;color:#fff;font-size:16px;font-weight:900;
+    content:"▼";margin-left:auto;color:#2563a8;font-size:16px;font-weight:900;
     width:30px;height:30px;display:grid;place-items:center;
-    border:1px solid #ffffff66;background:#ffffff18;border-radius:8px;
+    border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px;
     transition:transform .15s ease,background .15s ease
   }
-  .section.collapsible>h2:hover::after{background:#ffffff2c}
+  .section[data-section="overall"]>h2::after,
+  .section[data-section="display"]>h2::after{
+    color:#fff;border-color:#ffffff66;background:#ffffff18
+  }
+  .section.collapsible>h2:hover::after{background:#dbeafe}
+  .section[data-section="overall"]>h2:hover::after,
+  .section[data-section="display"]>h2:hover::after{background:#ffffff2c}
   .section.collapsible.collapsed>h2::after{transform:rotate(-90deg)}
   .section.collapsible.collapsed>:not(h2){display:none}
 
@@ -160,14 +178,15 @@
   .settingCaption{
     display:flex;align-items:center;gap:.45rem;
     margin:.55rem 0 .28rem;padding:.42rem .58rem;border-radius:.58rem;
-    background:#0f6f9f;color:#fff;font-size:12px;font-weight:800;letter-spacing:.03em
+    background:#e5f3fb;color:#1f6598;font-size:12px;font-weight:800;letter-spacing:.03em;
+    border-left:4px solid #2b7fb5
   }
   .settingCaption svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
   .settingRow{
     margin:.28rem 0;padding:.42rem .55rem;border-radius:.56rem;
-    background:#3a82b7;color:#fff
+    background:#f4f8fc;color:#334155;border:1px solid #e2e8f0
   }
-  .settingRow label,.settingRow .muted,.settingRow .styleValue{color:#fff}
+  .settingRow label,.settingRow .muted,.settingRow .styleValue{color:#526779}
   .settingRow select,.settingRow input[type=number]{background:#fff;color:#0f172a}
   .settingHelp{
     margin:.32rem 0 .55rem;padding:.48rem .58rem;border-radius:.55rem;
@@ -176,11 +195,11 @@
   .autoHeightBox{
     display:grid;grid-template-columns:1fr auto;align-items:center;gap:.7rem;
     margin:.36rem 0;padding:.56rem .6rem;border-radius:.65rem;
-    background:#4f46e5;color:#fff;box-shadow:0 4px 12px #4f46e52b
+    background:#eef2ff;color:#3730a3;border:2px solid #818cf8;box-shadow:0 4px 12px #4f46e51c
   }
   .autoHeightBox strong{display:block;font-size:13px}
-  .autoHeightBox small{display:block;margin-top:.08rem;color:#e0e7ff;font-size:10px}
-  .autoHeightBox input[type=checkbox]{width:20px;height:20px;accent-color:#22d3ee}
+  .autoHeightBox small{display:block;margin-top:.08rem;color:#6366f1;font-size:10px}
+  .autoHeightBox input[type=checkbox]{width:20px;height:20px;accent-color:#4f46e5}
   #list{display:grid;gap:.42rem}
 
   /* カード（やさしい角と色） */
@@ -328,7 +347,7 @@
 
       <div class="headerActions">
         <div class="controlGroup">
-          <span class="groupLabel">表示</span>
+          <span class="groupLabel"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg>表示</span>
           <select id="projection" title="カメラの投影法">
             <option value="persp" selected>透視</option>
             <option value="ortho">正射影</option>
@@ -341,7 +360,7 @@
           </select>
         </div>
 
-        <button id="openBtn" type="button">ファイル ▾</button>
+        <button id="openBtn" class="headerPictBtn" type="button"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h7l2 2h9v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path><path d="M3 9h18"></path></svg>ファイル ▾</button>
         <input id="fileRaw" type="file" accept=".svg,.svgz,image/svg+xml,application/gzip">
         <input id="fileSaved" type="file" accept=".svg">
         <div id="openMenu" class="menu">
@@ -350,19 +369,19 @@
           <button data-act="open-saved">保存した3D天気図を開く</button>
         </div>
 
-        <button id="exportBtn" type="button">保存 ▾</button>
+        <button id="exportBtn" class="headerPictBtn" type="button"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h12l2 2v16H5Z"></path><path d="M8 3v6h8V3M8 15h8v6H8Z"></path></svg>保存 ▾</button>
         <div id="exportMenu" class="menu">
           <button data-act="export-stl">STLを書き出す</button>
           <div class="sep"></div>
           <button data-act="save-svg">SVGを保存する</button>
         </div>
 
-        <button id="helpBtn" class="iconOnly" type="button" title="使い方">?</button>
-        <button id="panelToggle" type="button" data-open="true">設定</button>
+        <button id="helpBtn" class="iconOnly headerPictBtn" type="button" title="使い方"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.7 9a2.5 2.5 0 0 1 4.7 1.2c0 1.8-2.4 2.1-2.4 4M12 18h.01"></path></svg></button>
+        <button id="panelToggle" class="headerPictBtn" type="button" data-open="true"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h3M11 12h9M4 18h8M16 18h4"></path><circle cx="16" cy="6" r="2"></circle><circle cx="9" cy="12" r="2"></circle><circle cx="14" cy="18" r="2"></circle></svg>設定</button>
       </div>
 
     <div id="jmaDirectBar" aria-label="気象庁の過去天気図を直接読み込み">
-      <span class="sourceTitle">気象庁天気図</span>
+      <span class="sourceTitle"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17c3-4 5 2 8-2s5 2 10-3"></path><path d="M4 7h16M7 4v6M16 4v6"></path></svg>気象庁天気図</span>
       <span class="sourceHint">日付と日本時間を選択</span>
       <input id="jmaDate" type="date" title="日本時間の日付">
       <select id="jmaTime" title="日本時間">
@@ -374,9 +393,9 @@
         <option value="18">18時</option>
         <option value="21">21時</option>
       </select>
-      <button id="jmaLoadBtn" type="button">気象庁SVGを読み込む</button>
-      <button id="openSvgBtn" type="button">手元のSVGを開く</button>
+      <button id="jmaLoadBtn" class="headerPictBtn" type="button"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4"></path><path d="M4 19h16"></path></svg>気象庁SVGを読み込む</button>
       <a id="jmaArchiveLink" href="https://www.data.jma.go.jp/yoho/wxchart/quickdaily.html" target="_blank" rel="noopener noreferrer" title="気象庁の1日表示">元データ</a>
+      <button id="openSvgBtn" class="headerPictBtn" type="button"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h7l2 2h9v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path><path d="M12 12v5M9.5 14.5 12 12l2.5 2.5"></path></svg>手元のSVGを開く</button>
     </div>
     </div>
   </header>
