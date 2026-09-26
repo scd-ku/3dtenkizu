@@ -657,6 +657,11 @@ const ui = {
   basisVisible: document.getElementById('basisVisible'),
   gridVisible: document.getElementById('gridVisible'),
   imgOpacity: document.getElementById('imgOpacity'),
+  himawariOpacity: document.getElementById('himawariOpacity'),
+  himawariSourceLink: document.getElementById('himawariSourceLink'),
+  himawariTimeLabel: document.getElementById('himawariTimeLabel'),
+  overlayThickness: document.getElementById('overlayThickness'),
+  overlayHeight: document.getElementById('overlayHeight'),
   lineNumberVisible: document.getElementById('lineNumberVisible'),
   landOverlayVisible: document.getElementById('landOverlayVisible'),
   mapTextVisible: document.getElementById('mapTextVisible'),
@@ -756,10 +761,30 @@ const dl=new THREE.DirectionalLight(0xffffff,0.95); dl.position.set(400,300,500)
 const gridXY=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridXY.rotation.x=Math.PI/2; gridXY.material.opacity=.6; gridXY.material.transparent=true; scene.add(gridXY);
 const gridZX=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridZX.material.opacity=.35; gridZX.material.transparent=true; scene.add(gridZX);
 
+function makeThickAxis(direction,color){
+  const group=new THREE.Group();
+  const material=new THREE.MeshBasicMaterial({color});
+  const shaft=new THREE.Mesh(new THREE.CylinderGeometry(2.3,2.3,1,12),material);
+  shaft.position.y=.5;
+  const head=new THREE.Mesh(new THREE.ConeGeometry(10,28,16),material);
+  head.position.y=1;
+  group.add(shaft,head);
+  group.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.clone().normalize());
+  group.userData.setLength=(len)=>{
+    const headLen=Math.min(28,Math.max(16,len*.075));
+    const shaftLen=Math.max(1,len-headLen*.72);
+    shaft.scale.y=shaftLen;
+    shaft.position.y=shaftLen/2;
+    head.scale.setScalar(Math.max(.7,Math.min(1.25,headLen/28)));
+    head.position.y=shaftLen+headLen*.36;
+  };
+  group.userData.setLength(300);
+  return group;
+}
 const basis=new THREE.Group();
-const axisX=new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(),300,0xff5f5f,34,14);
-const axisY=new THREE.ArrowHelper(new THREE.Vector3(0,1,0),new THREE.Vector3(),300,0x14b8a6,34,14);
-const axisZ=new THREE.ArrowHelper(new THREE.Vector3(0,0,1),new THREE.Vector3(),300,0x60a5fa,34,14);
+const axisX=makeThickAxis(new THREE.Vector3(1,0,0),0xff5f5f);
+const axisY=makeThickAxis(new THREE.Vector3(0,1,0),0x14b8a6);
+const axisZ=makeThickAxis(new THREE.Vector3(0,0,1),0x60a5fa);
 basis.add(axisX,axisY,axisZ);
 const axisLabels={X:null,Y:null,Z:null};
 const fontLoader=new FontLoader();
@@ -787,7 +812,10 @@ const frontOverlayGroup=new THREE.Group();
 weatherOverlayRoot.add(landOverlayGroup,mapTextOverlayGroup,frontOverlayGroup);
 /* item: pipeMesh, pickPipeMesh, pathPoints, path2D, height, ui, userColor(null=auto), kind */
 let items=[];
-let weatherPlane=null, lastSvgDims=null, lastRawSvgText="";
+let weatherPlane=null, satellitePlane=null, lastSvgDims=null, lastRawSvgText="";
+let currentJmaSourceInfo=null;
+let currentHimawariInfo=null;
+let currentHimawariDataUrl="";
 let linesOffset = new THREE.Vector3(0,0,0);
 let currentLinesGroup=null;
 let solidTerrainMesh=null;
@@ -819,9 +847,9 @@ function updateCoordinateFrame(){
   coordinateFrame={origin,xLength:xLen,yLength:yLen,zLength:zLen};
   basis.position.copy(origin);
 
-  axisX.setLength(xLen,Math.min(34,xLen*.075),Math.min(14,xLen*.035));
-  axisY.setLength(yLen,Math.min(34,yLen*.075),Math.min(14,yLen*.035));
-  axisZ.setLength(zLen,Math.min(34,zLen*.075),Math.min(14,zLen*.035));
+  axisX.userData.setLength(xLen);
+  axisY.userData.setLength(yLen);
+  axisZ.userData.setLength(zLen);
 
   const labelOffset=10;
   if(axisLabels.X){
