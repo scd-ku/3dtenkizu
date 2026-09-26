@@ -1792,6 +1792,134 @@ function addOpenFrameCap(group,it,bounds,color,z){
   addTerrainMesh(group,geom,color,z);
   return true;
 }
+function detectWeatherMapInnerBounds(svgText,dims){
+  const fallback=()=>{
+    const ix=dims.w*.038,iy=dims.h*.038;
+    return {minX:ix,maxX:dims.w-ix,minY:-(dims.h-iy),maxY:-iy,source:'fallback inset'};
+  };
+  if(!svgText) return fallback();
+
+  try{
+    const doc=new DOMParser().parseFromString(svgText,'image/svg+xml');
+    const svg=doc.querySelector('svg');
+    if(!svg) return fallback();
+
+    const raw=readSvgDims(svg);
+    const rects=[...svg.querySelectorAll('rect')];
+    const candidates=[];
+
+    const readStyle=(el,name)=>{
+      let cur=el;
+      while(cur&&cur!==svg.parentElement){
+        const direct=cur.getAttribute?.(name);
+        if(direct!=null&&direct!=='') return direct;
+        const style=cur.getAttribute?.('style')||'';
+        const m=style.match(new RegExp('(?:^|;)\\s*'+name+'\\s*:\\s*([^;]+)','i'));
+        if(m) return m[1].trim();
+        cur=cur.parentElement;
+      }
+      return '';
+    };
+    const darkStroke=(s)=>{
+      const v=String(s||'').trim().toLowerCase().replace(/\s+/g,'');
+      if(!v||v==='none') return false;
+      if(v==='black'||v==='#000'||v==='#000000') return true;
+      const rgb=v.match(/rgba?\((\d+),(\d+),(\d+)/);
+      if(rgb) return (+rgb[1]+ +rgb[2]+ +rgb[3])<180;
+      const hex=v.match(/^#([0-9a-f]{6})$/i);
+      if(hex){
+        const n=parseInt(hex[1],16);
+        return (((n>>16)&255)+((n>>8)&255)+(n&255))<180;
+      }
+      return false;
+    };
+
+    for(const rect of rects){
+      const x=parseFloat(rect.getAttribute('x')||'0');
+      const y=parseFloat(rect.getAttribute('y')||'0');
+      const w=parseFloat(rect.getAttribute('width')||'0');
+      const h=parseFloat(rect.getAttribute('height')||'0');
+      if(![x,y,w,h].every(Number.isFinite)||w<=0||h<=0) continue;
+
+      const m=cumulativeElementTransform(rect,svg);
+      const corners=[
+        transformPoint2D({x,y},m),
+        transformPoint2D({x:x+w,y},m),
+        transformPoint2D({x:x+w,y:y+h},m),
+        transformPoint2D({x,y:y+h},m)
+      ];
+      const xs=corners.map(p=>p.x-raw.minX);
+      const ys=corners.map(p=>p.y-raw.minY);
+      const minX=Math.min(...xs),maxX=Math.max(...xs);
+      const minYsvg=Math.min(...ys),maxYsvg=Math.max(...ys);
+      const rw=maxX-minX,rh=maxYsvg-minYsvg;
+      const wr=rw/dims.w,hr=rh/dims.h,area=(rw*rh)/(dims.w*dims.h);
+      const insetX=Math.min(minX,dims.w-maxX)/dims.w;
+      const insetY=Math.min(minYsvg,dims.h-maxYsvg)/dims.h;
+
+      // 全面背景は除外。内側の大きな矩形を天気図枠候補とする。
+      if(wr<.58||hr<.58||wr>.985||hr>.985||area<.38) continue;
+      if(insetX<.004||insetY<.004) continue;
+
+      const stroke=readStyle(rect,'stroke');
+      const fill=readStyle(rect,'fill').toLowerCase();
+      let score=area*4;
+      if(darkStroke(stroke)) score+=8;
+      if(fill==='none'||fill==='transparent') score+=2;
+      // 画像例の黒枠は外周白帯より内側にあるため、数%の余白を好む。
+      score-=Math.abs(insetX-.035)*6;
+      score-=Math.abs(insetY-.035)*6;
+
+      candidates.push({
+        score,
+        bounds:{
+          minX:THREE.MathUtils.clamp(minX,0,dims.w),
+          maxX:THREE.MathUtils.clamp(maxX,0,dims.w),
+          minY:-THREE.MathUtils.clamp(maxYsvg,0,dims.h),
+          maxY:-THREE.MathUtils.clamp(minYsvg,0,dims.h),
+          source:'SVG frame rect'
+        }
+      });
+    }
+
+    candidates.sort((a,b)=>b.score-a.score);
+    const best=candidates[0]?.bounds;
+    if(best && best.maxX-best.minX>dims.w*.55 && best.maxY-best.minY>dims.h*.55){
+      console.info('weather map inner frame:',best);
+      return best;
+    }
+  }catch(err){
+    console.warn('weather frame detection failed',err);
+  }
+  return fallback();
+}
+function smoothTerrainOwners(input,nx,ny,passes=2){
+  let cur=new Uint16Array(input);
+  const dirs=[[-1,-1],[0,-1],[1,-1],[-1,0],[0,0],[1,0],[-1,1],[0,1],[1,1]];
+
+  for(let pass=0;pass<passes;pass++){
+    const next=new Uint16Array(cur);
+    for(let y=1;y<ny-1;y++){
+      for(let x=1;x<nx-1;x++){
+        const idx=y*nx+x;
+        const counts=new Map();
+        for(const [dx,dy] of dirs){
+          const v=cur[(y+dy)*nx+(x+dx)];
+          counts.set(v,(counts.get(v)||0)+1);
+        }
+        const own=cur[idx];
+        let best=own,bestCount=counts.get(own)||0;
+        for(const [v,n] of counts){
+          if(n>bestCount){best=v;bestCount=n;}
+        }
+        // 強い多数派だけ採用し、細い等圧線領域を消しすぎない。
+        if(best!==own&&bestCount>=6&&(counts.get(own)||0)<=3) next[idx]=best;
+      }
+    }
+    cur=next;
+  }
+  return cur;
+}
 function distance2PointToSegmentFast(px,py,ax,ay,bx,by){
   const vx=bx-ax,vy=by-ay;
   const wx=px-ax,wy=py-ay;
@@ -1815,7 +1943,9 @@ function prepareFineTerrainGrid(visibleItems,bounds){
   const canvasW=bounds.maxX-bounds.minX;
   const canvasH=bounds.maxY-bounds.minY;
   const key=[
-    Math.round(canvasW),Math.round(canvasH),
+    'v2',TERRAIN_GRID_DIVISIONS,
+    bounds.minX.toFixed(2),bounds.maxX.toFixed(2),
+    bounds.minY.toFixed(2),bounds.maxY.toFixed(2),
     ...visibleItems.map(it=>items.indexOf(it))
   ].join(':');
 
@@ -1873,8 +2003,10 @@ function prepareFineTerrainGrid(visibleItems,bounds){
     }
   }
 
+  const smoothedOwners=smoothTerrainOwners(owners,nx,ny,2);
+
   terrainGridCache={
-    key,nx,ny,dx,dy,bounds:{...bounds},owners,visibleItems:[...visibleItems]
+    key,nx,ny,dx,dy,bounds:{...bounds},owners:smoothedOwners,visibleItems:[...visibleItems]
   };
   console.info('fine terrain grid:',nx,'x',ny,'cells',nx*ny);
   return terrainGridCache;
@@ -2025,7 +2157,7 @@ function buildExactContourTerrain(){
 
   const canvasW=lastSvgDims?.w||1000;
   const canvasH=lastSvgDims?.h||1000;
-  const bounds={minX:0,minY:-canvasH,maxX:canvasW,maxY:0};
+  const bounds=detectWeatherMapInnerBounds(lastRawSvgText,{w:canvasW,h:canvasH});
   const maxH=currentMaxHeightStrict();
 
   const grid=prepareFineTerrainGrid(visibleItems,bounds);
