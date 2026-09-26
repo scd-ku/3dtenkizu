@@ -204,9 +204,14 @@
   }
   .settingCaption svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
   .settingSubhead{
-    margin:.5rem 0 .18rem;padding-left:.25rem;
+    position:relative;margin:.52rem 0 .18rem .48rem;padding:.1rem 0 .1rem .58rem;
     color:#334155;font-size:12px;font-weight:800
   }
+  .settingSubhead::before{
+    content:"";position:absolute;left:0;top:.18rem;bottom:.18rem;width:2px;
+    border-radius:2px;background:#9ec9e6
+  }
+  .settingSubgroup{margin-left:.58rem}
   .sourceCredit{
     margin:.18rem 0 .48rem;padding-left:.25rem;
     color:#64748b;font-size:10px;line-height:1.55
@@ -397,14 +402,14 @@
         <div id="openMenu" class="menu">
           <button data-act="open-raw">SVG / SVGZを開く</button>
           <div class="sep"></div>
-          <button data-act="open-saved">保存した設定情報を開く</button>
+          <button data-act="open-saved">設定情報を読み込んで再現</button>
         </div>
 
         <button id="exportBtn" class="headerPictBtn" type="button"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h12l2 2v16H5Z"></path><path d="M8 3v6h8V3M8 15h8v6H8Z"></path></svg>保存 ▾</button>
         <div id="exportMenu" class="menu">
-          <button data-act="export-stl">現在の立体をSTLで保存</button>
+          <button data-act="export-stl">現在の表示モードをSTLで保存</button>
           <div class="sep"></div>
-          <button data-act="save-settings">表示設定を保存</button>
+          <button data-act="save-settings">設定情報＋天気図を保存</button>
         </div>
 
         <button id="helpBtn" class="iconOnly headerPictBtn" type="button" title="使い方"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.7 9a2.5 2.5 0 0 1 4.7 1.2c0 1.8-2.4 2.1-2.4 4M12 18h.01"></path></svg></button>
@@ -470,19 +475,25 @@
         天気図設定
       </div>
       <div class="settingSubhead">画像</div>
-      <div class="row settingRow"><label>天気図</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.90" title="0%で非表示"></div>
-      <div class="row settingRow"><label>気象衛星ひまわり</label><input id="himawariOpacity" type="range" min="0" max="1" step="0.01" value="0" title="0%で非表示"></div>
-      <div class="sourceCredit">
-        <a id="himawariSourceLink" href="https://www.jma.go.jp/bosai/himawari/" target="_blank" rel="noopener noreferrer">気象衛星ひまわり画像（気象庁）</a><br>
-        出典：気象庁「気象衛星ひまわり」　<span id="himawariTimeLabel">天気図読込時に同時刻画像を取得</span>
+      <div class="settingSubgroup">
+        <div class="row settingRow"><label>透明度</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.90" title="0%で非表示"></div>
       </div>
 
       <div class="settingSubhead">抽出情報</div>
-      <div class="row settingRow"><label>太さ</label><input id="overlayThickness" type="range" min="0.4" max="4.0" step="0.1" value="1.2"></div>
-      <div class="row settingRow"><label>高さ</label><input id="overlayHeight" type="range" min="2" max="80" step="1" value="18"></div>
-      <div class="row settingRow"><label>海岸線</label><input id="landOverlayVisible" type="checkbox" checked></div>
-      <div class="row settingRow"><label>文字・数値</label><input id="mapTextVisible" type="checkbox" checked></div>
-      <div class="row settingRow"><label>前線</label><input id="frontOverlayVisible" type="checkbox" checked></div>
+      <div class="settingSubgroup">
+        <div class="row settingRow"><label>太さ</label><input id="overlayThickness" type="range" min="0.4" max="4.0" step="0.1" value="1.2"></div>
+        <div class="row settingRow"><label>高さ</label><input id="overlayHeight" type="range" min="2" max="80" step="1" value="18"></div>
+        <div class="row settingRow"><label>海岸線</label><input id="landOverlayVisible" type="checkbox" checked></div>
+        <div class="row settingRow"><label>文字・数値</label><input id="mapTextVisible" type="checkbox" checked></div>
+        <div class="row settingRow"><label>前線</label><input id="frontOverlayVisible" type="checkbox" checked></div>
+      </div>
+
+      <!-- 既存の衛星画像機能との後方互換用。設定パネルには表示しない。 -->
+      <div hidden aria-hidden="true">
+        <input id="himawariOpacity" type="range" min="0" max="1" step="0.01" value="0">
+        <a id="himawariSourceLink" href="https://www.jma.go.jp/bosai/himawari/"></a>
+        <span id="himawariTimeLabel"></span>
+      </div>
 
       <div class="settingCaption">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8c3-3 6 3 9 0s6 3 9 0M3 16c3-3 6 3 9 0s6 3 9 0"></path></svg>
@@ -588,8 +599,8 @@
     <h3>5. 自動高さ</h3>
     <p>「全体設定」の「自動高さ」をONにすると、気圧値ラベルが取得できる場合はその値を使い、取得できない場合は高気圧（H）・低気圧（L）・低圧部・熱帯低気圧（TD）・台風の中心位置と等圧線の包含関係から相対的な高低を推定します。細い破線は2 hPaの補助等圧線として通常の4 hPa等圧線の半分の間隔で扱います。最高点はZ軸矢印の内側に収まります。</p>
 
-    <h3>6. 表示と書き出し</h3>
-    <p>全体設定の「天気図画像」スライダーで下敷き画像の濃さを調整できます。0%で非表示になります。グリッド、座標軸、背景色も変更できます。「書き出し」からSTLまたは本アプリ用SVGを保存できます。従来どおり、手元のSVG/SVGZを「開く」から読み込むこともできます。</p>
+    <h3>6. 表示と保存</h3>
+    <p>「保存」では、現在選択している表示モード（パイプ・壁・立体）をSTLとして保存できます。また「設定情報＋天気図を保存」では、元の気象庁SVG、等圧線ごとの高さ、表示モード、色・透明度、抽出情報の設定、カメラ視点などを1つの設定ファイルに保存します。「ファイル」からその設定情報を読み込むと、保存時の表示を再現できます。</p>
 
     <div class="helpNote">
       気象庁の実況天気図は観測時刻から公開まで時間差があります。選択した時刻のファイルがまだ公開されていない場合は、ひとつ前の時刻を選んでください。WebGLを利用できない端末では自動的にSVG互換描画へ切り替わります。
@@ -764,18 +775,18 @@ const gridZX=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridZX.material.o
 function makeThickAxis(direction,color){
   const group=new THREE.Group();
   const material=new THREE.MeshBasicMaterial({color});
-  const shaft=new THREE.Mesh(new THREE.CylinderGeometry(2.3,2.3,1,12),material);
+  const shaft=new THREE.Mesh(new THREE.CylinderGeometry(3.4,3.4,1,14),material);
   shaft.position.y=.5;
-  const head=new THREE.Mesh(new THREE.ConeGeometry(10,28,16),material);
+  const head=new THREE.Mesh(new THREE.ConeGeometry(12,30,18),material);
   head.position.y=1;
   group.add(shaft,head);
   group.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.clone().normalize());
   group.userData.setLength=(len)=>{
-    const headLen=Math.min(28,Math.max(16,len*.075));
+    const headLen=Math.min(30,Math.max(18,len*.078));
     const shaftLen=Math.max(1,len-headLen*.72);
     shaft.scale.y=shaftLen;
     shaft.position.y=shaftLen/2;
-    head.scale.setScalar(Math.max(.7,Math.min(1.25,headLen/28)));
+    head.scale.setScalar(Math.max(.72,Math.min(1.28,headLen/30)));
     head.position.y=shaftLen+headLen*.36;
   };
   group.userData.setLength(300);
@@ -4141,15 +4152,27 @@ function captureCameraState(){
   };
 }
 function buildSettingsPackage(){
+  const weatherSvg=lastRawSvgText||'';
+  const weather={
+    svg:weatherSvg,
+    source:currentJmaSourceInfo||null,
+    dimensions:lastSvgDims?{w:lastSvgDims.w,h:lastSvgDims.h}:null,
+    jmaDate:ui.jmaDate.value||'',
+    jmaTime:ui.jmaTime.value||''
+  };
   return {
     app:'3dtenkizu',
-    version:2,
+    version:3,
     savedAt:new Date().toISOString(),
     settings:captureDisplaySettings(),
     camera:captureCameraState(),
+    // 各等圧線の座標・高さ・表示状態を含むため、同じ3D状態を再構成できる。
     projectSvg:buildProjectSVG(),
-    weatherSvg:lastRawSvgText||'',
-    weatherSource:currentJmaSourceInfo,
+    // 元の気象庁天気図SVG自体も同梱。外部サイトへ再取得せず背景画像を再現できる。
+    weather,
+    // v2との後方互換
+    weatherSvg,
+    weatherSource:currentJmaSourceInfo||null,
     himawari:{
       info:currentHimawariInfo,
       dataUrl:currentHimawariDataUrl||''
@@ -4166,7 +4189,7 @@ function downloadBlob(blob,filename){
 function doSaveSettings(){
   const pkg=buildSettingsPackage();
   const text=JSON.stringify(pkg);
-  downloadBlob(new Blob([text],{type:'application/json'}),'3dtenkizu-settings.json');
+  downloadBlob(new Blob([text],{type:'application/json'}),'3dtenkizu-project.3dtenkizu.json');
 }
 function applyDisplaySettings(s={}){
   if(s.bgColor) ui.bgColor.value=s.bgColor;
@@ -4231,9 +4254,12 @@ async function loadSettingsPackage(text){
   try{pkg=JSON.parse(text);}catch{throw new Error('設定情報JSONを読み取れません。');}
   if(pkg?.app!=='3dtenkizu') throw new Error('3D天気図の設定情報ではありません。');
 
-  if(pkg.weatherSvg){
+  const savedWeatherSvg=pkg.weather?.svg||pkg.weatherSvg||'';
+  const savedWeatherSource=pkg.weather?.source||pkg.weatherSource||null;
+
+  if(savedWeatherSvg){
     try{
-      const doc=new DOMParser().parseFromString(pkg.weatherSvg,'image/svg+xml');
+      const doc=new DOMParser().parseFromString(savedWeatherSvg,'image/svg+xml');
       const svg=doc.querySelector('svg');
       if(svg){
         const {w,h}=normalizeSvgRoot(svg);
@@ -4245,18 +4271,21 @@ async function loadSettingsPackage(text){
 
   if(pkg.projectSvg) await loadProjectSVG(pkg.projectSvg);
 
-  // projectSvg内のラッパーではなく、元の気象庁SVGを背景・抽出用に戻す。
-  if(pkg.weatherSvg&&lastSvgDims){
-    lastRawSvgText=pkg.weatherSvg;
+  // projectSvg内のラッパーではなく、保存時の元の気象庁SVGを背景・抽出用に戻す。
+  if(savedWeatherSvg&&lastSvgDims){
+    lastRawSvgText=savedWeatherSvg;
     await buildOrUpdateWeatherPlane(lastRawSvgText);
     rebuildWeatherFeatureOverlays(lastRawSvgText);
   }
 
-  currentJmaSourceInfo=pkg.weatherSource||null;
+  currentJmaSourceInfo=savedWeatherSource;
   currentHimawariInfo=pkg.himawari?.info||null;
   currentHimawariDataUrl=pkg.himawari?.dataUrl||'';
 
-  applyDisplaySettings(pkg.settings||{});
+  const restoredSettings={...(pkg.settings||{})};
+  if(!restoredSettings.jmaDate&&pkg.weather?.jmaDate) restoredSettings.jmaDate=pkg.weather.jmaDate;
+  if(!restoredSettings.jmaTime&&pkg.weather?.jmaTime) restoredSettings.jmaTime=pkg.weather.jmaTime;
+  applyDisplaySettings(restoredSettings);
 
   if(currentHimawariDataUrl){
     await setHimawariPlaneFromDataUrl(currentHimawariDataUrl);
