@@ -160,12 +160,16 @@
   .menu .sep{height:1px; background:#e5e7eb; margin:.25rem .25rem}
   .card.focus-ring{outline:2px solid var(--accent); box-shadow:0 0 0 4px #4f46e530}
   .card.selected{
-    background:#ff8a00;border-color:#ff8a00;color:#fff;
-    box-shadow:0 6px 18px #ff8a0035
+    background:#fff;border:3px solid #ff8a00;color:inherit;
+    padding:calc(.7rem - 2px) calc(.7rem - 2px) calc(.6rem - 2px);
+    box-shadow:0 0 0 2px #ff8a0022,0 6px 18px #ff8a0020
   }
-  .card.selected .chip{background:#fff;border-color:#fff;color:#c75b00}
-  .card.selected .muted,.card.selected .small,.card.selected label{color:#fff}
-  .card.selected input[type=number]{background:#fff;color:#111827;border-color:#fff}
+  .card.selected .chip{
+    background:var(--chip);border-color:#ff8a00;color:#334155
+  }
+  .card.selected .muted{color:#6b7280}
+  .card.selected .small{color:inherit}
+  .card.selected label{color:var(--muted)}
 
   /* スライダーを少し太く・大きめに */
   input[type=range]{width:220px}
@@ -888,19 +892,19 @@ function makePickMaterial(){
 function makeHoverMesh(points){
   if(rendererMode==='svg'){
     const g=new THREE.BufferGeometry().setFromPoints(points);
-    const m=new THREE.LineBasicMaterial({color:0xffb000,transparent:true,opacity:0.95,depthTest:false});
+    const m=new THREE.LineBasicMaterial({color:0xffb000,transparent:true,opacity:0.95,depthTest:true,depthWrite:false});
     const line=new THREE.Line(g,m);
-    line.renderOrder=1000;
+    line.renderOrder=4;
     line.visible=false;
     return line;
   }
   const g=buildTubeGeometry(points,PIPE_RADIUS*1.7);
   const m=new THREE.MeshBasicMaterial({
-    color:0xffb000,transparent:true,opacity:0.72,depthWrite:false,depthTest:false,
+    color:0xffb000,transparent:true,opacity:0.82,depthWrite:false,depthTest:true,
     side:THREE.DoubleSide
   });
   const mesh=new THREE.Mesh(g,m);
-  mesh.renderOrder=1000;
+  mesh.renderOrder=4;
   mesh.visible=false;
   return mesh;
 }
@@ -2397,27 +2401,30 @@ function disposeLineLabel(it){
 }
 function makeLineNumberSprite(text){
   const canvas=document.createElement('canvas');
-  canvas.width=160; canvas.height=64;
+  canvas.width=96; canvas.height=64;
   const ctx=canvas.getContext('2d');
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle='rgba(15,23,42,.88)';
-  ctx.beginPath();
-  if(ctx.roundRect) ctx.roundRect(4,4,152,56,18);
-  else ctx.rect(4,4,152,56);
-  ctx.fill();
-  ctx.strokeStyle='rgba(255,255,255,.9)';
-  ctx.lineWidth=3; ctx.stroke();
+
+  ctx.font='900 42px system-ui, sans-serif';
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  // パイプ上で読める白抜き数字。縁だけごく薄く付ける。
+  ctx.lineWidth=5;
+  ctx.strokeStyle='rgba(0,0,0,.28)';
+  ctx.strokeText(text,48,34);
   ctx.fillStyle='#fff';
-  ctx.font='700 30px system-ui, sans-serif';
-  ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.fillText(text,80,33);
+  ctx.fillText(text,48,34);
 
   const tex=new THREE.CanvasTexture(canvas);
   tex.colorSpace=THREE.SRGBColorSpace;
-  const mat=new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false,depthWrite:false});
+  const mat=new THREE.SpriteMaterial({
+    map:tex,transparent:true,depthTest:true,depthWrite:false
+  });
   const sp=new THREE.Sprite(mat);
-  sp.scale.set(36,14,1);
-  sp.renderOrder=2000;
+  // パイプ直径に近い高さに固定する。
+  const h=PIPE_RADIUS*2.15;
+  sp.scale.set(h*1.45,h,1);
+  sp.renderOrder=3;
   return sp;
 }
 function representativeLabelPoint(it){
@@ -2440,7 +2447,7 @@ function rebuildLineNumberLabels(){
   for(const it of items){
     disposeLineLabel(it);
     if(!it.listIndex) continue;
-    const sp=makeLineNumberSprite('線'+String(it.listIndex).padStart(2,'0'));
+    const sp=makeLineNumberSprite(String(it.listIndex).padStart(2,'0'));
     it.lineLabelSprite=sp;
     currentLinesGroup.add(sp);
   }
@@ -2452,7 +2459,7 @@ function updateLineNumberLabels(){
     const sp=it.lineLabelSprite;
     if(!sp) continue;
     const p=representativeLabelPoint(it);
-    sp.position.set(p.x,p.y,it.height*HEIGHT_SCALE+11);
+    sp.position.set(p.x,p.y,it.height*HEIGHT_SCALE+PIPE_RADIUS*.8);
     sp.visible=enabled && (it.ui?.vis?.checked ?? true);
   }
 }
@@ -2532,7 +2539,7 @@ function buildList(orderByPressure=false){
     const t=document.createElement('div'); t.className='t';
     const chip=document.createElement('span');
     chip.className='chip';
-    chip.textContent='線 '+String(++i).padStart(2,'0');
+    chip.textContent=String(++i).padStart(2,'0');
 
     const vis=document.createElement('input');
     vis.type='checkbox';
@@ -2635,7 +2642,7 @@ function setHoveredItem(it,clientX,clientY){
   if(it && !draggingItem){
     const p=isFinite(it.actualPressure)
       ? Math.round(it.actualPressure)+' hPa ('+pressureTypeLabel(it)+')'
-      : (it.pressureSource||('線 '+String(it.listIndex||'').padStart(2,'0')));
+      : (it.pressureSource||String(it.listIndex||'').padStart(2,'0'));
     updateHudByClientXY(clientX,clientY,it.height,`${p} / 高さ`);
     ui.dragHud.style.display='block';
   }else if(!draggingItem){
