@@ -173,11 +173,13 @@
   .section.collapsible>h2{cursor:pointer;user-select:none}
   .section.collapsible>h2:hover{background:#f0f7ff}
   .section[data-section="overall"]>h2,
-  .section[data-section="display"]>h2{
+  .section[data-section="display"]>h2,
+  .section[data-section="list"]>h2{
     color:#fff;background:#2563a8;border-color:#2563a8
   }
   .section[data-section="overall"]>h2:hover,
-  .section[data-section="display"]>h2:hover{background:#1f6598}
+  .section[data-section="display"]>h2:hover,
+  .section[data-section="list"]>h2:hover{background:#1f6598}
   .section.collapsible>h2::after{
     content:"▼";margin-left:auto;color:#2563a8;font-size:16px;font-weight:900;
     width:30px;height:30px;display:grid;place-items:center;
@@ -185,14 +187,16 @@
     transition:transform .15s ease,background .15s ease
   }
   .section[data-section="overall"]>h2::after,
-  .section[data-section="display"]>h2::after{
+  .section[data-section="display"]>h2::after,
+  .section[data-section="list"]>h2::after{
     color:#fff;border-color:#ffffff66;background:#ffffff18
   }
   .section.collapsible>h2:hover::after{background:#dbeafe}
   .section[data-section="overall"]>h2:hover::after,
-  .section[data-section="display"]>h2:hover::after{background:#ffffff2c}
+  .section[data-section="display"]>h2:hover::after,
+  .section[data-section="list"]>h2:hover::after{background:#ffffff2c}
   .section.collapsible.collapsed>h2::after{transform:rotate(-90deg)}
-  .section.collapsible.collapsed>:not(h2){display:none}
+  .section.collapsible.collapsed>:not(h2){display:none!important}
 
   .row{display:grid;grid-template-columns:1fr auto;gap:.7rem;align-items:center;margin:.42rem 0}
   .row label{font-size:13px;color:var(--muted)}
@@ -4298,6 +4302,7 @@ function captureCameraState(){
     type:camera.isOrthographicCamera?'ortho':'persp',
     position:camera.position.toArray(),
     quaternion:camera.quaternion.toArray(),
+    up:camera.up.toArray(),
     target:controls.target.toArray(),
     zoom:camera.zoom
   };
@@ -4394,6 +4399,7 @@ function restoreCameraState(st){
   if(want==='persp'&&!camera.isPerspectiveCamera) usePerspective();
   ui.projection.value=want;
   if(Array.isArray(st.position)&&st.position.length===3) camera.position.fromArray(st.position);
+  if(Array.isArray(st.up)&&st.up.length===3) camera.up.fromArray(st.up);
   if(Array.isArray(st.quaternion)&&st.quaternion.length===4) camera.quaternion.fromArray(st.quaternion);
   if(Number.isFinite(st.zoom)) camera.zoom=st.zoom;
   if(Array.isArray(st.target)&&st.target.length===3){
@@ -4876,8 +4882,9 @@ function clearCurrentWeatherForMissing(){
 function isJmaMissingError(err){
   return /HTTP\s*404|404|not\s*found|見つかりません|公開されていません/i.test(String(err?.message||err||''));
 }
-async function loadJmaDirect({silentMissing=false,resetView=true}={}){
+async function loadJmaDirect({silentMissing=false,resetView=false}={}){
   const serial=++jmaLoadSerial;
+  const savedCamera=resetView?null:captureCameraState();
   ui.jmaPrevBtn.disabled=true;
   ui.jmaNextBtn.disabled=true;
   if(!silentMissing) setJmaStatus('天気図を読み込んでいます…');
@@ -4904,7 +4911,6 @@ async function loadJmaDirect({silentMissing=false,resetView=true}={}){
       loadHimawariForWeatherTime(selectedUtc);
     }
 
-    const savedCamera=resetView?null:captureCameraState();
     const only=extractIsobarsOnly(svgText);
     await loadSVGFromString(only,{resetView:false});
     if(serial!==jmaLoadSerial) return false;
@@ -5114,8 +5120,10 @@ ui.autoMode.addEventListener('change', ()=>{
 });
 ui.gapFactor.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); });
 
-/* 初期可視 */
-basis.visible=true; gridXY.visible=true; gridZX.visible=true;
+/* 初期可視：設定UIの初期値をそのまま反映 */
+basis.visible=ui.basisVisible.checked;
+gridXY.visible=ui.gridVisible.checked;
+gridZX.visible=ui.gridVisible.checked;
 </script>
 </body>
 </html>
