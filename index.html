@@ -334,6 +334,44 @@
     font-size:11px;color:#475569;background:#ffffffc9;
     padding:.3rem .55rem;border-radius:.5rem;pointer-events:none
   }
+  .viewCubeWrap{
+    position:absolute;top:14px;right:14px;z-index:12;
+    width:88px;height:98px;display:flex;align-items:flex-start;justify-content:center;
+    pointer-events:none;user-select:none
+  }
+  .viewCubeScene{
+    width:62px;height:62px;perspective:260px;pointer-events:auto;
+    transform:translateY(10px)
+  }
+  .viewCube{
+    position:relative;width:62px;height:62px;transform-style:preserve-3d;
+    transform:rotateX(-24deg) rotateY(34deg);
+    transition:transform .18s ease
+  }
+  .viewCubeFace{
+    position:absolute;inset:0;border:1px solid #94a3b8;background:#ffffffdd;color:#64748b;
+    display:flex;align-items:center;justify-content:center;
+    font:700 13px/1 "M PLUS Rounded 1c","Yu Gothic",sans-serif;
+    cursor:pointer;box-shadow:inset 0 0 0 1px #ffffff99;
+    transition:background .12s ease,color .12s ease,box-shadow .12s ease
+  }
+  .viewCubeFace:hover,.viewCubeFace:focus-visible{
+    background:#e5f3fb;color:#1f6598;outline:none;
+    box-shadow:inset 0 0 0 2px #5aa7d6
+  }
+  .viewCubeFace[data-view="front"]{transform:translateZ(31px)}
+  .viewCubeFace[data-view="back"]{transform:rotateY(180deg) translateZ(31px)}
+  .viewCubeFace[data-view="right"]{transform:rotateY(90deg) translateZ(31px)}
+  .viewCubeFace[data-view="left"]{transform:rotateY(-90deg) translateZ(31px)}
+  .viewCubeFace[data-view="top"]{transform:rotateX(90deg) translateZ(31px)}
+  .viewCubeFace[data-view="bottom"]{transform:rotateX(-90deg) translateZ(31px)}
+  .viewCubeHome{
+    position:absolute;left:3px;bottom:0;width:28px;height:28px;border-radius:50%;
+    border:1px solid #cbd5e1;background:#ffffffdd;color:#64748b;
+    display:grid;place-items:center;pointer-events:auto;cursor:pointer;padding:0
+  }
+  .viewCubeHome:hover{background:#e5f3fb;color:#1f6598}
+  .viewCubeHome svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
   .modalShade{
     position:fixed;inset:0;background:#0f172a66;z-index:1000;
     display:none;align-items:center;justify-content:center;padding:20px
@@ -390,12 +428,7 @@
             <option value="persp" selected>透視</option>
             <option value="ortho">正射影</option>
           </select>
-          <select id="viewSelect" title="視点">
-            <option value="all">斜め</option>
-            <option value="top">真上</option>
-            <option value="front">正面</option>
-            <option value="side">側面</option>
-          </select>
+          <input id="viewSelect" type="hidden" value="all">
         </div>
 
         <button id="openBtn" class="headerPictBtn" type="button"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h7l2 2h9v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path><path d="M3 9h18"></path></svg>ファイル ▾</button>
@@ -445,6 +478,21 @@
     <div id="overlay">ドラッグ：回転　右ドラッグ：移動　ホイール：ズーム　等圧線をドラッグ：高さ変更</div>
     <div id="dragHud"></div>
     <div id="jmaStatus"></div>
+    <div class="viewCubeWrap" aria-label="視点キューブ">
+      <div class="viewCubeScene">
+        <div class="viewCube" id="viewCube">
+          <button class="viewCubeFace" data-view="front" type="button" title="正面">前</button>
+          <button class="viewCubeFace" data-view="back" type="button" title="背面">後</button>
+          <button class="viewCubeFace" data-view="right" type="button" title="右側面">右</button>
+          <button class="viewCubeFace" data-view="left" type="button" title="左側面">左</button>
+          <button class="viewCubeFace" data-view="top" type="button" title="真上">上</button>
+          <button class="viewCubeFace" data-view="bottom" type="button" title="真下">下</button>
+        </div>
+      </div>
+      <button id="viewCubeHome" class="viewCubeHome" type="button" title="斜め視点" aria-label="斜め視点">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 8-7 8 7"></path><path d="M6 10v10h12V10M10 20v-6h4v6"></path></svg>
+      </button>
+    </div>
     <div id="copyright">Science Communication Design Laboratory, Kagawa University</div>
   </div>
 
@@ -471,7 +519,7 @@
       </div>
       <div class="row settingRow"><label>背景色</label><input id="bgColor" type="color" value="#dff0ff"></div>
       <div class="row settingRow"><label>座標軸</label><input id="basisVisible" type="checkbox" checked></div>
-      <div class="row settingRow"><label>グリッド（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
+      <div class="row settingRow"><label>グリッド（XY/ZX）</label><input id="gridVisible" type="checkbox"></div>
 
       <div class="settingCaption">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM7 8h10M7 12h10M7 16h6"></path></svg>
@@ -484,7 +532,7 @@
 
       <div class="settingSubhead">抽出情報</div>
       <div class="settingSubgroup">
-        <div class="row settingRow"><label>太さ</label><input id="overlayThickness" type="range" min="0.4" max="4.0" step="0.1" value="1.2"></div>
+        <div class="row settingRow"><label>太さ</label><input id="overlayThickness" type="range" min="0" max="4.0" step="0.1" value="1.2" title="0で抽出情報を非表示"></div>
         <div class="row settingRow"><label>高さ</label><input id="overlayHeight" type="range" min="0" max="1" step="0.01" value="1" title="左端：天気図面／右端：最上部の等圧線"></div>
         <div class="row settingRow"><label>海岸線</label><input id="landOverlayVisible" type="checkbox" checked></div>
         <div class="row settingRow"><label>文字・数値</label><input id="mapTextVisible" type="checkbox" checked></div>
