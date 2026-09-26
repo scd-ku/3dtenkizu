@@ -2875,6 +2875,7 @@ ui.frontOverlayVisible.addEventListener('change',updateWeatherOverlayVisibility)
 ui.overlayHeight.addEventListener('input',updateWeatherOverlayHeight);
 ui.overlayThickness.addEventListener('input',()=>{
   if(lastRawSvgText) rebuildWeatherFeatureOverlays(lastRawSvgText);
+  updateWeatherOverlayVisibility();
 });
 
 
@@ -2971,6 +2972,8 @@ function isFrameLikeElement(el,svg,bounds){
   return ((b.maxX-b.minX)/fw>.82 && (b.maxY-b.minY)/fh>.82);
 }
 function addExactWeatherFrame(group,bounds){
+  const thickness=parseFloat(ui.overlayThickness?.value)||0;
+  if(thickness<=0.001) return;
   const pts=[
     new THREE.Vector3(bounds.minX,bounds.minY,0),
     new THREE.Vector3(bounds.maxX,bounds.minY,0),
@@ -2980,7 +2983,7 @@ function addExactWeatherFrame(group,bounds){
   ];
   let obj;
   if(rendererMode==='webgl'){
-    const radius=Math.max(.25,parseFloat(ui.overlayThickness?.value)||1.2);
+    const radius=Math.max(.08,thickness);
     obj=new THREE.Mesh(
       buildStraightTubeGeometry(pts,radius),
       new THREE.MeshBasicMaterial({color:0x080808,depthTest:true,depthWrite:true})
@@ -2996,7 +2999,8 @@ function addExactWeatherFrame(group,bounds){
 }
 function featureLineGroupFromElements(svg,elements){
   const group=new THREE.Group();
-  if(!elements.length) return group;
+  const thickness=parseFloat(ui.overlayThickness?.value)||0;
+  if(!elements.length||thickness<=0.001) return group;
 
   const dims=readSvgDims(svg);
   const doc=document.implementation.createDocument('http://www.w3.org/2000/svg','svg',null);
@@ -3022,7 +3026,7 @@ function featureLineGroupFromElements(svg,elements){
   try{
     const loader=new SVGLoader();
     const parsed=loader.parse(new XMLSerializer().serializeToString(out));
-    const radius=Math.max(.25,parseFloat(ui.overlayThickness?.value)||1.2);
+    const radius=Math.max(.08,thickness);
     for(const p of parsed.paths){
       for(const sub of p.subPaths){
         const pts2=sub.getPoints(100);
@@ -3211,9 +3215,10 @@ function updateWeatherOverlayHeight(){
   weatherOverlayRoot.position.z=THREE.MathUtils.lerp(0,topZ,t);
 }
 function updateWeatherOverlayVisibility(){
-  landOverlayGroup.visible=!!ui.landOverlayVisible?.checked;
-  mapTextOverlayGroup.visible=!!ui.mapTextVisible?.checked;
-  frontOverlayGroup.visible=!!ui.frontOverlayVisible?.checked;
+  const hasThickness=(parseFloat(ui.overlayThickness?.value)||0)>0.001;
+  landOverlayGroup.visible=hasThickness&&!!ui.landOverlayVisible?.checked;
+  mapTextOverlayGroup.visible=hasThickness&&!!ui.mapTextVisible?.checked;
+  frontOverlayGroup.visible=hasThickness&&!!ui.frontOverlayVisible?.checked;
 }
 
 /* ==== SVG → items ==== */
@@ -3279,7 +3284,7 @@ function stitchSubpathSegments(segments){
   return work;
 }
 
-async function loadSVGFromString(svgText){
+async function loadSVGFromString(svgText,{resetView=false}={}){
   selectedItem=null; hoveredItem=null; terrainGridCache=null;
   rootLines.clear(); items=[]; ui.list.innerHTML='';
 
@@ -3351,7 +3356,7 @@ async function loadSVGFromString(svgText){
   if (ui.autoMode.checked) applyAutoHeights();
   buildList(true);
   updateHeightsAndColors();
-  setDefaultObliqueView();
+  if(resetView) setDefaultObliqueView();
 }
 
 /* ==== ラベル推定 ==== */
@@ -4598,9 +4603,10 @@ ui.fileRaw.addEventListener('change', async (e)=>{
       await buildOrUpdateWeatherPlane(lastRawSvgText);
       loadHimawariForWeatherTime(inferWeatherUtc14(lastRawSvgText));
     }
+    const savedCamera=captureCameraState();
     const only=extractIsobarsOnly(raw);
-    await loadSVGFromString(only);
-    setDefaultObliqueView();
+    await loadSVGFromString(only,{resetView:false});
+    restoreCameraState(savedCamera);
   }catch(err){ console.error('読み込みエラー',err); }
 });
 ui.fileSaved.addEventListener('change', async (e)=>{
@@ -4898,10 +4904,12 @@ async function loadJmaDirect({silentMissing=false,resetView=true}={}){
       loadHimawariForWeatherTime(selectedUtc);
     }
 
+    const savedCamera=resetView?null:captureCameraState();
     const only=extractIsobarsOnly(svgText);
-    await loadSVGFromString(only);
+    await loadSVGFromString(only,{resetView:false});
     if(serial!==jmaLoadSerial) return false;
     if(resetView) setDefaultObliqueView();
+    else restoreCameraState(savedCamera);
 
     setJmaStatus(`天気図：${label}`);
     console.info('JMA SVG source:',url);
