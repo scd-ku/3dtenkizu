@@ -2172,6 +2172,122 @@ function pointToPolylineDistance2(point,points){
   }
   return best;
 }
+function pressureTypeLabel(it){
+  return it.isobarKind==='aux' ? '2 hPa補助線' : '4 hPa等圧線';
+}
+function assignActualPressureValues(){
+  const labs=readPressureLabels(lastRawSvgText).map(lb=>({x:lb.x,y:-lb.y,value:lb.value}));
+  const diag=Math.hypot(lastSvgDims?.w||1000,lastSvgDims?.h||1000);
+
+  for(const it of items){
+    it.actualPressure=undefined;
+    it.actualPressureSource='';
+  }
+
+  // まず、等圧線そのものに十分近い数値ラベルを直接アンカーとして採用。
+  for(const lb of labs){
+    let best=null,bd=Infinity;
+    for(const it of items){
+      const d2=pointToPolylineDistance2(lb,it.pathPoints);
+      if(d2<bd){bd=d2;best=it;}
+    }
+    const d=Math.sqrt(bd);
+    if(best && d<diag*.022){
+      if(!isFinite(best._pressureAnchorDistance) || d<best._pressureAnchorDistance){
+        best.actualPressure=lb.value;
+        best.actualPressureSource='図中ラベル';
+        best._pressureAnchorDistance=d;
+      }
+    }
+  }
+
+  // H/Lなどの系ごとに、中心から近い順に等圧線を並べ、4/2hPa間隔で補間する。
+  const groups=new Map();
+  for(const it of items){
+    const pc=it.pressureCenter;
+    if(!pc) continue;
+    const key=[pc.label,Math.round(pc.x*10),Math.round(pc.y*10)].join(':');
+    if(!groups.has(key)) groups.set(key,{center:pc,items:[]});
+    groups.get(key).items.push(it);
+  }
+
+  for(const g of groups.values()){
+    const arr=g.items.slice().sort((a,b)=>
+      pointToPolylineDistance2(g.center,a.pathPoints)-pointToPolylineDistance2(g.center,b.pathPoints)
+    );
+
+    let anchorIndex=arr.findIndex(it=>isFinite(it.actualPressure));
+    let anchorPressure=anchorIndex>=0?arr[anchorIndex].actualPressure:undefined;
+
+    if(anchorIndex<0 && labs.length){
+      let nearest=null,bd=Infinity;
+      for(const lb of labs){
+        const dx=lb.x-g.center.x,dy=lb.y-g.center.y;
+        const d2=dx*dx+dy*dy;
+        if(d2<bd){bd=d2;nearest=lb;}
+      }
+      if(nearest && Math.sqrt(bd)<diag*.09){
+        const first=arr[0];
+        const step=first?.isobarKind==='aux'?2:4;
+        anchorIndex=0;
+        anchorPressure=g.center.sign<0
+          ? Math.ceil(nearest.value/step)*step
+          : Math.floor(nearest.value/step)*step;
+        if(first){
+          first.actualPressure=anchorPressure;
+          first.actualPressureSource='気圧中心から推定';
+        }
+      }
+    }
+
+    if(anchorIndex>=0 && isFinite(anchorPressure)){
+      const outwardSign=g.center.sign<0 ? +1 : -1;
+
+      let p=anchorPressure;
+      for(let i=anchorIndex+1;i<arr.length;i++){
+        const step=Math.min(arr[i-1].isobarStep||4,arr[i].isobarStep||4);
+        p+=outwardSign*step;
+        if(!isFinite(arr[i].actualPressure)){
+          arr[i].actualPressure=p;
+          arr[i].actualPressureSource='系統推定';
+        }else p=arr[i].actualPressure;
+      }
+
+      p=anchorPressure;
+      for(let i=anchorIndex-1;i>=0;i--){
+        const step=Math.min(arr[i+1].isobarStep||4,arr[i].isobarStep||4);
+        p-=outwardSign*step;
+        if(!isFinite(arr[i].actualPressure)){
+          arr[i].actualPressure=p;
+          arr[i].actualPressureSource='系統推定';
+        }else p=arr[i].actualPressure;
+      }
+    }
+  }
+
+  // 最後まで数値が付かない線は、相対pressureを1012hPa付近へ写像して補完。
+  const known=items.filter(it=>isFinite(it.actualPressure)&&isFinite(it.pressure));
+  let baseOffset=1012;
+  if(known.length){
+    const offsets=known.map(it=>it.actualPressure-it.pressure).sort((a,b)=>a-b);
+    baseOffset=offsets[Math.floor(offsets.length/2)];
+  }else{
+    const ps=items.filter(it=>isFinite(it.pressure)).map(it=>it.pressure).sort((a,b)=>a-b);
+    const med=ps.length?ps[Math.floor(ps.length/2)]:0;
+    baseOffset=1012-med;
+  }
+
+  for(const it of items){
+    if(!isFinite(it.actualPressure)){
+      const raw=(isFinite(it.pressure)?it.pressure:0)+baseOffset;
+      const grid=it.isobarKind==='aux'?2:4;
+      it.actualPressure=Math.round(raw/grid)*grid;
+      it.actualPressureSource='推定';
+    }
+    delete it._pressureAnchorDistance;
+  }
+}
+
 function assignSymbolAwarePressure(){
   computeContourHierarchy();
   const centers=readPressureCenters(lastRawSvgText);
@@ -2237,19 +2353,15 @@ async function assignPressuresFromLabelsOrAreas(){
   const centers=readPressureCenters(lastRawSvgText);
   const labs=readPressureLabels(lastRawSvgText);
 
-  // H/L/TD/TY が読める天気図では、それを優先する。
-  // 近傍の数字を等圧線ラベルと誤認して高低が逆転するのを防ぐ。
   if(centers.length){
     assignSymbolAwarePressure();
-    return;
-  }
-
-  if(labs.length){
+  }else if(labs.length){
     for(const it of items){
       const x=it.centroid.x,y=it.centroid.y;
       let best=null,bd=Infinity;
       for(const lb of labs){
-        const d=(lb.x-x)*(lb.x-x)+(lb.y-y)*(lb.y-y);
+        const ly=-lb.y;
+        const d=(lb.x-x)*(lb.x-x)+(ly+y)*(ly+y);
         if(d<bd){bd=d;best=lb;}
       }
       it.pressure=best?best.value:undefined;
@@ -2258,10 +2370,11 @@ async function assignPressuresFromLabelsOrAreas(){
       it.pressureSign=0;
     }
     ui.labelInfo.textContent='気圧値ラベル: '+labs.length+'個';
-    return;
+  }else{
+    assignSymbolAwarePressure();
   }
 
-  assignSymbolAwarePressure();
+  assignActualPressureValues();
 }
 
 /* ==== auto / update ==== */
@@ -2679,7 +2792,8 @@ function buildProjectSVG(){
     displayMode: ui.displayMode.value,
     displayHue: parseFloat(ui.displayHue.value),
     displayOpacity: parseFloat(ui.displayOpacity.value),
-    solidContourVisible: ui.solidContourVisible.checked
+    solidContourVisible: ui.solidContourVisible.checked,
+    lineNumberVisible: ui.lineNumberVisible.checked
   });
   svg.appendChild(meta);
 
@@ -2763,6 +2877,7 @@ async function loadProjectSVG(svgText){
     if(isFinite(meta?.displayHue)) ui.displayHue.value=String(meta.displayHue);
     if(isFinite(meta?.displayOpacity)) ui.displayOpacity.value=String(meta.displayOpacity);
     if(typeof meta?.solidContourVisible==='boolean') ui.solidContourVisible.checked=meta.solidContourVisible;
+    if(typeof meta?.lineNumberVisible==='boolean') ui.lineNumberVisible.checked=meta.lineNumberVisible;
     updateStyleControlLabels();
     updateSolidContourUI();
   }catch{}
