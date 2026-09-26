@@ -66,11 +66,15 @@
   }
   .headerMain{
     display:grid;
-    grid-template-columns:auto minmax(430px,1fr) auto;
+    grid-template-columns:auto auto minmax(430px,1fr) auto;
     align-items:center;
-    gap:.6rem;
+    gap:.55rem;
     min-width:max-content
   }
+  #qrBtn{grid-column:1;grid-row:1}
+  header h1{grid-column:2;grid-row:1}
+  #jmaDirectBar{grid-column:3;grid-row:1}
+  .headerActions{grid-column:4;grid-row:1}
   header h1{
     font-size:17px;margin:0;font-weight:800;display:flex;align-items:center;gap:.45rem;
     color:#2563a8;white-space:nowrap
@@ -90,6 +94,11 @@
   header button:active{transform:translateY(1px)}
   header input[type=file]{display:none}
   .iconOnly{min-width:38px;padding:.48rem .55rem!important;font-weight:700}
+  #qrBtn{
+    background:#2563a8;color:#fff;border-color:#2563a8;
+    min-width:46px;font-weight:800;box-shadow:0 3px 10px #2563a833
+  }
+  #qrBtn:hover{background:#1d5f91;color:#fff;border-color:#1d5f91}
   #panelToggle[data-open="true"]::after{content:" ◀"}
   #panelToggle[data-open="false"]::after{content:" ▶"}
 
@@ -129,24 +138,49 @@
   #app[data-panel="closed"] #sidebar{display:none}
   .section{margin-bottom:1rem}
   .section h2{
-    font-size:14px;margin:.4rem 0 .35rem;font-weight:800;
-    display:flex;align-items:center;gap:.45rem;color:#2563a8
+    font-size:14px;margin:.25rem 0 .45rem;font-weight:800;
+    display:flex;align-items:center;gap:.5rem;color:#fff;
+    background:#2563a8;padding:.52rem .62rem;border-radius:.72rem
   }
-  .sectionIcon{width:18px;height:18px;flex:0 0 auto;color:#3978ad}
-  .section.collapsible>h2{cursor:pointer;user-select:none;padding:.28rem .15rem;border-radius:.45rem}
-  .section.collapsible>h2:hover{background:#f1f5f9}
+  .sectionIcon{width:18px;height:18px;flex:0 0 auto;color:currentColor}
+  .section.collapsible>h2{cursor:pointer;user-select:none}
+  .section.collapsible>h2:hover{background:#1f6598}
   .section.collapsible>h2::after{
-    content:"▼";margin-left:auto;color:#2563a8;font-size:15px;font-weight:900;
-    width:28px;height:28px;display:grid;place-items:center;
-    border:1px solid #dbeafe;background:#eff6ff;border-radius:8px;
+    content:"▼";margin-left:auto;color:#fff;font-size:16px;font-weight:900;
+    width:30px;height:30px;display:grid;place-items:center;
+    border:1px solid #ffffff66;background:#ffffff18;border-radius:8px;
     transition:transform .15s ease,background .15s ease
   }
-  .section.collapsible>h2:hover::after{background:#dbeafe}
+  .section.collapsible>h2:hover::after{background:#ffffff2c}
   .section.collapsible.collapsed>h2::after{transform:rotate(-90deg)}
   .section.collapsible.collapsed>:not(h2){display:none}
 
-  .row{display:grid;grid-template-columns:1fr auto;gap:.7rem;align-items:center;margin:.5rem 0}
+  .row{display:grid;grid-template-columns:1fr auto;gap:.7rem;align-items:center;margin:.42rem 0}
   .row label{font-size:13px;color:var(--muted)}
+  .settingCaption{
+    display:flex;align-items:center;gap:.45rem;
+    margin:.55rem 0 .28rem;padding:.42rem .58rem;border-radius:.58rem;
+    background:#0f6f9f;color:#fff;font-size:12px;font-weight:800;letter-spacing:.03em
+  }
+  .settingCaption svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
+  .settingRow{
+    margin:.28rem 0;padding:.42rem .55rem;border-radius:.56rem;
+    background:#3a82b7;color:#fff
+  }
+  .settingRow label,.settingRow .muted,.settingRow .styleValue{color:#fff}
+  .settingRow select,.settingRow input[type=number]{background:#fff;color:#0f172a}
+  .settingHelp{
+    margin:.32rem 0 .55rem;padding:.48rem .58rem;border-radius:.55rem;
+    background:#eef6fb;color:#526779;font-size:11px;line-height:1.65
+  }
+  .autoHeightBox{
+    display:grid;grid-template-columns:1fr auto;align-items:center;gap:.7rem;
+    margin:.36rem 0;padding:.56rem .6rem;border-radius:.65rem;
+    background:#4f46e5;color:#fff;box-shadow:0 4px 12px #4f46e52b
+  }
+  .autoHeightBox strong{display:block;font-size:13px}
+  .autoHeightBox small{display:block;margin-top:.08rem;color:#e0e7ff;font-size:10px}
+  .autoHeightBox input[type=checkbox]{width:20px;height:20px;accent-color:#22d3ee}
   #list{display:grid;gap:.42rem}
 
   /* カード（やさしい角と色） */
@@ -266,7 +300,7 @@
   .helpNote{padding:.7rem .8rem;background:#f8fafc;border:1px solid var(--border);border-radius:.8rem}
   @media(max-width:1180px){
     #app{grid-template-rows:auto 1fr}
-    .headerMain{grid-template-columns:auto minmax(400px,1fr) auto}
+    .headerMain{grid-template-columns:auto auto minmax(400px,1fr) auto}
     .controlGroup .groupLabel{display:none}
     header button,header label,header select{padding:.4rem .52rem;font-size:12px}
     #jmaDirectBar input,#jmaDirectBar select,#jmaDirectBar button{padding:.4rem .46rem;font-size:12px}
@@ -281,6 +315,7 @@
 <div id="app" data-panel="open">
   <header>
     <div class="headerMain">
+      <button id="qrBtn" class="iconOnly" type="button" title="このアプリのQRコード">QR</button>
       <h1>
         <svg class="sunLineIcon" viewBox="0 0 24 24" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
@@ -322,7 +357,6 @@
           <button data-act="save-svg">SVGを保存する</button>
         </div>
 
-        <button id="qrBtn" class="iconOnly" type="button" title="QRコード">QR</button>
         <button id="helpBtn" class="iconOnly" type="button" title="使い方">?</button>
         <button id="panelToggle" type="button" data-open="true">設定</button>
       </div>
@@ -368,14 +402,29 @@
         </svg>
         全体設定
       </h2>
-      <div class="row"><label>背景色</label><input id="bgColor" type="color" value="#dff0ff"></div>
-      <div class="row"><label>座標軸</label><input id="basisVisible" type="checkbox" checked></div>
-      <div class="row"><label>グリッド（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
-      <div class="row"><label>自動高さ</label><input id="autoMode" type="checkbox"></div>
-      <div class="row"><label>間隔</label><input id="gapFactor" type="range" min="0.2" max="1" step="0.02" value="0.82"></div>
-      <div class="row"><label>天気図画像</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.90" title="0%で非表示"></div>
-      <div class="row"><label>線番号</label><input id="lineNumberVisible" type="checkbox" checked title="3D上の線番号を表示"></div>
-      <div class="row"><span class="muted" id="labelInfo">ラベル未解析</span><span></span></div>
+      <div class="settingCaption">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM7 9h10M7 13h6"></path></svg>
+        背景設定
+      </div>
+      <div class="row settingRow"><label>背景色</label><input id="bgColor" type="color" value="#dff0ff"></div>
+      <div class="row settingRow"><label>座標軸</label><input id="basisVisible" type="checkbox" checked></div>
+      <div class="row settingRow"><label>グリッド（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
+      <div class="row settingRow"><label>天気図画像</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.90" title="0%で非表示"></div>
+
+      <div class="settingCaption">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8c3-3 6 3 9 0s6 3 9 0M3 16c3-3 6 3 9 0s6 3 9 0"></path></svg>
+        等圧線設定
+      </div>
+      <div class="autoHeightBox">
+        <div><strong>自動高さ</strong><small>気圧の順序からZ位置を自動配置します</small></div>
+        <input id="autoMode" type="checkbox" title="等圧線の高さを自動配置">
+      </div>
+      <div class="row settingRow"><label>高さの間隔</label><input id="gapFactor" type="range" min="0.2" max="1" step="0.02" value="0.82"></div>
+      <div class="row settingRow"><label>線番号</label><input id="lineNumberVisible" type="checkbox" checked title="3D上の線番号を表示"></div>
+      <div class="row settingRow"><label>陸地輪郭（黒線）</label><input id="landOverlayVisible" type="checkbox" checked></div>
+      <div class="row settingRow"><label>天気図の文字・数値</label><input id="mapTextVisible" type="checkbox" checked></div>
+      <div class="row settingRow"><label>前線（黒線）</label><input id="frontOverlayVisible" type="checkbox" checked></div>
+      <div class="row settingRow"><span id="labelInfo">ラベル未解析</span><span></span></div>
     </div>
 
     <div class="section collapsible" data-section="display">
@@ -388,7 +437,7 @@
         </svg>
         表示スタイル
       </h2>
-      <div class="row">
+      <div class="row settingRow">
         <label>表示モード</label>
         <select id="displayMode">
           <option value="pipe" selected>パイプ</option>
@@ -396,7 +445,7 @@
           <option value="solid">立体</option>
         </select>
       </div>
-      <div class="row">
+      <div class="row settingRow">
         <label>色相補正</label>
         <div class="styleControl">
           <input id="displayHue" type="range" min="-180" max="180" step="1" value="0">
@@ -404,18 +453,18 @@
           <span id="displayHueValue" class="styleValue">0°</span>
         </div>
       </div>
-      <div class="row">
+      <div class="row settingRow">
         <label>透明度</label>
         <div class="styleControl">
           <input id="displayOpacity" type="range" min="0.1" max="1" step="0.01" value="0.90">
           <span id="displayOpacityValue" class="styleValue">90%</span>
         </div>
       </div>
-      <div class="row" id="solidContourRow">
+      <div class="row settingRow" id="solidContourRow">
         <label>立体の等圧線</label>
         <input id="solidContourVisible" type="checkbox" checked title="立体モードで等圧線を表示">
       </div>
-      <div class="muted" style="margin:.15rem 0 .65rem">
+      <div class="settingHelp">
         色は高さに応じて赤→青へ変化します。色相補正で全体の色味を調整できます。<br>壁：パイプと同じ幅の壁面　／　立体：天気図全体を細かな格子で解析し、最も近い等圧線の高さを各領域へ割り当てた連続する段状地形として表示します
       </div>
     </div>
