@@ -582,7 +582,7 @@
     <h2 id="helpTitle">3D天気図の使い方</h2>
 
     <h3>1. 気象庁の天気図を読み込む</h3>
-    <p>日付と時刻（日本時間）を選び、「気象庁SVGを読み込む」を押します。アプリは気象庁の「過去の実況天気図（1日表示）」を参照し、その時刻のカラーSVGリンクを探して直接読み込み、等圧線を3D化します。手元に保存したSVG/SVGZは「手元のSVGを開く」から読み込めます。</p>
+    <p>アプリを開くと、取得可能な最新の気象庁天気図を自動的に表示します。日付・時刻を変更するとその日時へ自動で切り替わり、左右の矢印ボタンで前後の天気図へ移動できます。該当する情報がない日時は「ありません」と表示します。手元に保存したSVG/SVGZは「手元のSVGを開く」から読み込めます。</p>
 
     <h3>2. 3D表示を操作する</h3>
     <ul>
@@ -4551,13 +4551,15 @@ function setJmaStatus(message, isError=false){
   ui.jmaStatus.style.color = isError ? '#b91c1c' : '#334155';
 }
 
+const JMA_JST_HOURS=[3,6,9,12,15,18,21];
+let jmaLoadSerial=0;
+
 function setDefaultJmaDateTime(){
   // 実況天気図は公開に時間差があるため、現在時刻の約3時間前を初期値にする
   const target = new Date(Date.now() - 3*60*60*1000 + 9*60*60*1000);
   const y=target.getUTCFullYear(), m=target.getUTCMonth()+1, d=target.getUTCDate(), h=target.getUTCHours();
-  const available=[3,6,9,12,15,18,21];
   let selected=3;
-  for(const x of available) if(x<=h) selected=x;
+  for(const x of JMA_JST_HOURS) if(x<=h) selected=x;
 
   let dateObj = new Date(Date.UTC(y,m-1,d));
   if(h<3){
@@ -4744,11 +4746,57 @@ async function fetchJmaChart(){
   };
 }
 
-async function loadJmaDirect(){
-  ui.jmaLoadBtn.disabled=true;
-  setJmaStatus('気象庁から天気図を読み込んでいます…');
+function selectedJmaLabel(){
+  return (ui.jmaDate.value||'日付未選択')+' '+pad2(Number(ui.jmaTime.value)||0)+':00 JST';
+}
+function shiftJmaSelection(delta){
+  if(!ui.jmaDate.value) setDefaultJmaDateTime();
+  const [y,m,d]=ui.jmaDate.value.split('-').map(Number);
+  let idx=JMA_JST_HOURS.indexOf(Number(ui.jmaTime.value));
+  if(idx<0) idx=0;
+  const date=new Date(Date.UTC(y,m-1,d));
+
+  if(delta<0){
+    idx--;
+    if(idx<0){
+      idx=JMA_JST_HOURS.length-1;
+      date.setUTCDate(date.getUTCDate()-1);
+    }
+  }else{
+    idx++;
+    if(idx>=JMA_JST_HOURS.length){
+      idx=0;
+      date.setUTCDate(date.getUTCDate()+1);
+    }
+  }
+
+  ui.jmaDate.value=`${date.getUTCFullYear()}-${pad2(date.getUTCMonth()+1)}-${pad2(date.getUTCDate())}`;
+  ui.jmaTime.value=pad2(JMA_JST_HOURS[idx]);
+  updateJmaArchiveLink();
+}
+function clearCurrentWeatherForMissing(){
+  selectedItem=null;hoveredItem=null;terrainGridCache=null;
+  rootLines.clear();items=[];ui.list.innerHTML='';
+  clearOverlayGroup(landOverlayGroup);
+  clearOverlayGroup(mapTextOverlayGroup);
+  clearOverlayGroup(frontOverlayGroup);
+  if(weatherPlane) weatherPlane.visible=false;
+  if(satellitePlane) satellitePlane.visible=false;
+  ui.fallbackWeather.style.display='none';
+}
+function isJmaMissingError(err){
+  return /HTTP\s*404|404|not\s*found|見つかりません|公開されていません/i.test(String(err?.message||err||''));
+}
+async function loadJmaDirect({silentMissing=false,resetView=true}={}){
+  const serial=++jmaLoadSerial;
+  ui.jmaPrevBtn.disabled=true;
+  ui.jmaNextBtn.disabled=true;
+  if(!silentMissing) setJmaStatus('天気図を読み込んでいます…');
+
   try{
     const result=await fetchJmaChart();
+    if(serial!==jmaLoadSerial) return false;
+
     const {svgText,url,label,pageUrl}=result;
     currentJmaSourceInfo={url,pageUrl,label,date:ui.jmaDate.value,time:ui.jmaTime.value};
     const doc=new DOMParser().parseFromString(svgText,'image/svg+xml');
@@ -4759,32 +4807,79 @@ async function loadJmaDirect(){
     lastSvgDims={w,h};
     lastRawSvgText=new XMLSerializer().serializeToString(svg);
     await buildOrUpdateWeatherPlane(lastRawSvgText);
-    const selectedUtc=selectedJstToUtcInfo().timestamp14;
-    loadHimawariForWeatherTime(selectedUtc);
+    if(serial!==jmaLoadSerial) return false;
+
+    // 衛星画像は表示設定が有効な場合だけ取得する。
+    if(parseFloat(ui.himawariOpacity.value)>0.001){
+      const selectedUtc=selectedJstToUtcInfo().timestamp14;
+      loadHimawariForWeatherTime(selectedUtc);
+    }
 
     const only=extractIsobarsOnly(svgText);
     await loadSVGFromString(only);
-    setDefaultObliqueView();
+    if(serial!==jmaLoadSerial) return false;
+    if(resetView) setDefaultObliqueView();
 
-    setJmaStatus(`気象庁SVGを読み込みました：${label}`);
+    setJmaStatus(`天気図：${label}`);
     console.info('JMA SVG source:',url);
+    return true;
   }catch(err){
+    if(serial!==jmaLoadSerial) return false;
     console.error('JMA direct load error',err);
-    setJmaStatus(
-      `SVGを取得できませんでした。「元データ」を開くと、気象庁の1日表示ページで同じ日付のSVGリンクを確認できます。（${err.message}）`,
-      true
-    );
+
+    if(!silentMissing){
+      if(isJmaMissingError(err)){
+        clearCurrentWeatherForMissing();
+        setJmaStatus(`${selectedJmaLabel()}：ありません`,true);
+      }else{
+        setJmaStatus(`${selectedJmaLabel()}：取得できません（${err.message}）`,true);
+      }
+    }
+    return false;
   }finally{
-    ui.jmaLoadBtn.disabled=false;
+    if(serial===jmaLoadSerial){
+      ui.jmaPrevBtn.disabled=false;
+      ui.jmaNextBtn.disabled=false;
+    }
   }
 }
+async function loadLatestAvailableJma(){
+  setDefaultJmaDateTime();
+  setJmaStatus('最新の天気図を確認しています…');
 
-ui.jmaLoadBtn.addEventListener('click',loadJmaDirect);
+  for(let i=0;i<10;i++){
+    const ok=await loadJmaDirect({silentMissing:true,resetView:true});
+    if(ok) return true;
+    shiftJmaSelection(-1);
+  }
+
+  clearCurrentWeatherForMissing();
+  setJmaStatus('最新の天気図はありません',true);
+  return false;
+}
+
 ui.openSvgBtn.addEventListener('click',()=>ui.fileRaw.click());
-ui.jmaDate.addEventListener('change',updateJmaArchiveLink);
+ui.jmaPrevBtn.addEventListener('click',async()=>{
+  shiftJmaSelection(-1);
+  await loadJmaDirect();
+});
+ui.jmaNextBtn.addEventListener('click',async()=>{
+  shiftJmaSelection(1);
+  await loadJmaDirect();
+});
+ui.jmaDate.addEventListener('change',async()=>{
+  updateJmaArchiveLink();
+  await loadJmaDirect();
+});
+ui.jmaTime.addEventListener('change',async()=>{
+  updateJmaArchiveLink();
+  await loadJmaDirect();
+});
+
 setDefaultJmaDateTime();
+setTimeout(()=>{loadLatestAvailableJma();},0);
 if(rendererMode==='svg'){
-  setJmaStatus('この環境ではWebGLを利用できないため、軽量なSVG互換描画に自動切替しました。気象庁データの読込と3D操作は利用できます。');
+  console.info('WebGLを利用できないためSVG互換描画へ切り替えています。');
 }
 
 /* ==== QR / ヘルプ ==== */
