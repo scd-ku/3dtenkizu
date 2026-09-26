@@ -2600,6 +2600,7 @@ function buildList(orderByPressure=false){
     num.title='高さ（Z）';
 
     const syncHeight=(v,source)=>{
+      if(String(v).trim()==='') return;
       const value=Number(v);
       if(!Number.isFinite(value)) return;
       it.height=value;
