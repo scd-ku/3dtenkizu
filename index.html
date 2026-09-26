@@ -1560,6 +1560,61 @@ function turfPolygonToShapeGeometry(feature){
   g.computeVertexNormals();
   return g;
 }
+function pointSegmentDistance2XY(p,a,b){
+  const vx=b[0]-a[0],vy=b[1]-a[1];
+  const wx=p[0]-a[0],wy=p[1]-a[1];
+  const vv=vx*vx+vy*vy;
+  if(vv<1e-18){
+    const dx=p[0]-a[0],dy=p[1]-a[1];
+    return dx*dx+dy*dy;
+  }
+  let t=(wx*vx+wy*vy)/vv;
+  t=Math.max(0,Math.min(1,t));
+  const qx=a[0]+t*vx,qy=a[1]+t*vy;
+  const dx=p[0]-qx,dy=p[1]-qy;
+  return dx*dx+dy*dy;
+}
+function pointPolylineDistance2XY(p,line){
+  let best=Infinity;
+  for(let i=0;i<line.length-1;i++){
+    best=Math.min(best,pointSegmentDistance2XY(p,line[i],line[i+1]));
+  }
+  return best;
+}
+function cellBoundaryUsesContour(outer,line,tol){
+  if(!outer?.length||!line?.length) return false;
+  const tol2=tol*tol;
+  let matchedLength=0;
+
+  for(let i=0;i<outer.length-1;i++){
+    const a=outer[i],b=outer[i+1];
+    const len=Math.hypot(b[0]-a[0],b[1]-a[1]);
+    if(len<tol*.2) continue;
+
+    const mid=[(a[0]+b[0])*.5,(a[1]+b[1])*.5];
+    const q1=[a[0]*.75+b[0]*.25,a[1]*.75+b[1]*.25];
+    const q3=[a[0]*.25+b[0]*.75,a[1]*.25+b[1]*.75];
+
+    const dMid=pointPolylineDistance2XY(mid,line);
+    const d1=pointPolylineDistance2XY(q1,line);
+    const d3=pointPolylineDistance2XY(q3,line);
+
+    // polygonize後の辺が元等圧線と同じ位置にある場合だけ境界として採用。
+    if(dMid<=tol2&&(d1<=tol2||d3<=tol2)){
+      matchedLength+=len;
+      if(matchedLength>=tol*3) return true;
+    }
+  }
+  return false;
+}
+function lowerContourLevelForItem(it,visibleItems,minLocalHeight){
+  let lower=minLocalHeight;
+  for(const other of visibleItems){
+    if(other===it) continue;
+    if(other.height<it.height-1e-6) lower=Math.max(lower,other.height);
+  }
+  return lower;
+}
 function buildExactContourTerrain(){
   const group=new THREE.Group();
   const visibleItems=items.filter(it=>it.ui?.vis?.checked??true);
@@ -1571,20 +1626,23 @@ function buildExactContourTerrain(){
   const maxH=currentMaxHeightStrict();
   const minHeight=Math.min(0,...visibleItems.map(it=>it.height*HEIGHT_SCALE));
 
-  // 各等圧線について「その線より高い側」をあらかじめ求める。
-  const sideRegions=visibleItems.map(it=>({
-    it,
-    region:highSideMultiPolygon(it,bounds)
-  }));
+  // 各等圧線の高い側領域は保持するが、高さ判定には
+  // 「そのポリゴンの境界を実際に構成する等圧線」だけを使う。
+  const sideRegionByItem=new Map();
+  for(const it of visibleItems){
+    sideRegionByItem.set(it,highSideMultiPolygon(it,bounds));
+  }
 
   // 天気図外枠と全等圧線を、接続点を共有する完全にノード化された線網にする。
   const contourFeatures=[];
+  const contourRecords=[];
   const frameNodes=[];
   for(const it of visibleItems){
     const line=contourLineForPolygonize(it,bounds);
     if(!line?.coords?.length) continue;
     try{
       contourFeatures.push(turf.lineString(line.coords,{kind:'isobar'}));
+      contourRecords.push({it,coords:line.coords});
       if(line.open) frameNodes.push(...line.frameNodes);
     }catch(err){
       console.warn('contour line creation failed',err);
@@ -1623,16 +1681,31 @@ function buildExactContourTerrain(){
     if(sample.x<bounds.minX-1e-6||sample.x>bounds.maxX+1e-6||
        sample.y<bounds.minY-1e-6||sample.y>bounds.maxY+1e-6) continue;
 
+    const tol=Math.max(canvasW,canvasH)*2e-4;
+    const boundaryItems=[];
+    for(const rec of contourRecords){
+      if(cellBoundaryUsesContour(outer,rec.coords,tol)){
+        boundaryItems.push(rec.it);
+      }
+    }
+
+    // 面の高さは、その面を実際に囲む等圧線だけから決める。
+    // 等圧線の高い側にある場合はその等圧線高さ、
+    // 低い側なら一つ下の等圧線レベルを候補にする。
     let h=minHeight/HEIGHT_SCALE;
-    for(const entry of sideRegions){
-      if(entry.region?.length && pointInMultiPolygonXY(sample,entry.region)){
-        h=Math.max(h,entry.it.height);
+    for(const it of boundaryItems){
+      const region=sideRegionByItem.get(it);
+      const highSide=region?.length&&pointInMultiPolygonXY(sample,region);
+      if(highSide){
+        h=Math.max(h,it.height);
+      }else{
+        h=Math.max(h,lowerContourLevelForItem(it,visibleItems,minHeight/HEIGHT_SCALE));
       }
     }
 
     const geom=turfPolygonToShapeGeometry(feature);
     if(!geom) continue;
-    cellInfos.push({feature,height:h,geom});
+    cellInfos.push({feature,height:h,geom,boundaryCount:boundaryItems.length});
   }
 
   for(const cell of cellInfos){
@@ -1665,7 +1738,10 @@ function buildExactContourTerrain(){
     );
   }
 
-  console.info('solid terrain polygonized cells:',cellInfos.length);
+  console.info(
+    'solid terrain polygonized cells:',cellInfos.length,
+    'boundary matches:',cellInfos.map(c=>c.boundaryCount)
+  );
   return group;
 }
 
