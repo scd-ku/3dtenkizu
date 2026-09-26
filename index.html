@@ -989,6 +989,125 @@ function getDefaultViewBox(){
   return box;
 }
 
+/* ==== 視点キューブ連動 ==== */
+let cubeDragState=null;
+let cubeSuppressClickUntil=0;
+
+function syncViewCubeFromCamera(){
+  if(!ui.viewCube||!controls||!camera) return;
+  const offset=camera.position.clone().sub(controls.target);
+  if(offset.lengthSq()<1e-8) return;
+  offset.normalize();
+
+  const yaw=Math.atan2(offset.x,-offset.y);
+  const pitch=Math.asin(THREE.MathUtils.clamp(offset.z,-1,1));
+  const rx=-THREE.MathUtils.radToDeg(pitch);
+  const ry=THREE.MathUtils.radToDeg(yaw);
+  ui.viewCube.style.transform=`rotateX(${rx.toFixed(3)}deg) rotateY(${ry.toFixed(3)}deg)`;
+}
+
+function orbitCameraFromCube(dx,dy){
+  if(!controls||!camera) return;
+  const target=controls.target.clone();
+  const offset=camera.position.clone().sub(target);
+  const radius=Math.max(1e-4,offset.length());
+
+  let yaw=Math.atan2(offset.y,offset.x);
+  let pitch=Math.asin(THREE.MathUtils.clamp(offset.z/radius,-1,1));
+
+  yaw-=dx*0.012;
+  pitch+=dy*0.012;
+  pitch=THREE.MathUtils.clamp(pitch,-Math.PI/2+0.025,Math.PI/2-0.025);
+
+  const cp=Math.cos(pitch);
+  offset.set(
+    radius*cp*Math.cos(yaw),
+    radius*cp*Math.sin(yaw),
+    radius*Math.sin(pitch)
+  );
+
+  camera.position.copy(target).add(offset);
+  camera.up.set(0,0,1);
+  camera.lookAt(target);
+  _target.copy(target);
+  controls.target.copy(target);
+  controls.update();
+  ui.viewSelect.value='all';
+  syncViewCubeFromCamera();
+}
+
+function setDiagonalViewFromCorner(dirText){
+  const parts=String(dirText||'').split(',').map(Number);
+  if(parts.length!==3||parts.some(v=>!Number.isFinite(v))) return;
+
+  const box=getDefaultViewBox();
+  const center=new THREE.Vector3(),size=new THREE.Vector3();
+  box.getCenter(center);box.getSize(size);
+  const dir=new THREE.Vector3(parts[0],parts[1],parts[2]).normalize();
+  const currentRadius=camera.position.distanceTo(controls.target);
+  const fitRadius=Math.max(size.x,size.y,size.z)*1.65+1;
+  const radius=Math.max(currentRadius,fitRadius*.72);
+
+  camera.position.copy(center).add(dir.multiplyScalar(radius));
+  camera.up.set(0,0,1);
+  _target.copy(center);
+  controls.target.copy(center);
+  camera.lookAt(center);
+  controls.update();
+  if(!camera.isPerspectiveCamera) setOrthoFrustum();
+  ui.viewSelect.value='all';
+  syncViewCubeFromCamera();
+}
+
+function bindViewCubeDrag(){
+  if(!ui.viewCubeScene) return;
+
+  ui.viewCubeScene.addEventListener('pointerdown',e=>{
+    if(e.button!==0) return;
+    cubeDragState={
+      pointerId:e.pointerId,
+      x:e.clientX,y:e.clientY,
+      startX:e.clientX,startY:e.clientY,
+      moved:false
+    };
+    ui.viewCubeScene.classList.add('dragging');
+    try{ui.viewCubeScene.setPointerCapture(e.pointerId);}catch{}
+    e.preventDefault();
+  });
+
+  ui.viewCubeScene.addEventListener('pointermove',e=>{
+    if(!cubeDragState||e.pointerId!==cubeDragState.pointerId) return;
+    const dx=e.clientX-cubeDragState.x;
+    const dy=e.clientY-cubeDragState.y;
+    const total=Math.hypot(e.clientX-cubeDragState.startX,e.clientY-cubeDragState.startY);
+
+    if(total>3) cubeDragState.moved=true;
+    if(cubeDragState.moved){
+      orbitCameraFromCube(dx,dy);
+      cubeDragState.x=e.clientX;
+      cubeDragState.y=e.clientY;
+      e.preventDefault();
+    }
+  });
+
+  const finish=e=>{
+    if(!cubeDragState||e.pointerId!==cubeDragState.pointerId) return;
+    if(cubeDragState.moved) cubeSuppressClickUntil=performance.now()+180;
+    cubeDragState=null;
+    ui.viewCubeScene.classList.remove('dragging');
+    try{ui.viewCubeScene.releasePointerCapture(e.pointerId);}catch{}
+  };
+  ui.viewCubeScene.addEventListener('pointerup',finish);
+  ui.viewCubeScene.addEventListener('pointercancel',finish);
+
+  ui.viewCubeScene.addEventListener('click',e=>{
+    if(performance.now()<cubeSuppressClickUntil){
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  },true);
+}
+
 /* ==== render loop / resize ==== */
 function resize(){
   const v=document.getElementById('viewer');
@@ -1003,6 +1122,7 @@ addEventListener('resize',resize); resize();
   for(const label of Object.values(axisLabels)){
     if(label) label.quaternion.copy(camera.quaternion);
   }
+  syncViewCubeFromCamera();
   renderer.render(scene,camera);
 })();
 
@@ -5120,6 +5240,12 @@ ui.viewSelect.addEventListener('change', e=>{
   else setDefaultObliqueView();
 });
 ui.viewCube?.addEventListener('click',e=>{
+  const corner=e.target.closest('[data-dir]');
+  if(corner){
+    setDiagonalViewFromCorner(corner.dataset.dir);
+    return;
+  }
+
   const face=e.target.closest('[data-view]');
   if(!face) return;
   const v=face.dataset.view;
@@ -5132,6 +5258,8 @@ ui.viewCube?.addEventListener('click',e=>{
   else if(v==='right') viewSide();
 });
 ui.viewCubeHome?.addEventListener('click',()=>setDefaultObliqueView());
+bindViewCubeDrag();
+syncViewCubeFromCamera();
 ui.projection.addEventListener('change', e=>{ (e.target.value==='ortho')?useOrthographic():usePerspective(); fitView(chartGroup); });
 ui.panelToggle.addEventListener('click',()=>{
   const open=ui.app.getAttribute('data-panel')!=='closed';
