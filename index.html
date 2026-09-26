@@ -4099,8 +4099,178 @@ function doExportSTL(){
 
   const stl=exporter.parse(group);
   const blob=new Blob([stl],{type:'model/stl'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='3dtenkizu.stl'; a.click();
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='3dtenkizu-'+mode+'.stl'; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+
+/* ==== 表示設定の保存・再現 ==== */
+function captureDisplaySettings(){
+  return {
+    bgColor:ui.bgColor.value,
+    basisVisible:ui.basisVisible.checked,
+    gridVisible:ui.gridVisible.checked,
+    imgOpacity:parseFloat(ui.imgOpacity.value),
+    himawariOpacity:parseFloat(ui.himawariOpacity.value),
+    landOverlayVisible:ui.landOverlayVisible.checked,
+    mapTextVisible:ui.mapTextVisible.checked,
+    frontOverlayVisible:ui.frontOverlayVisible.checked,
+    overlayThickness:parseFloat(ui.overlayThickness.value),
+    overlayHeight:parseFloat(ui.overlayHeight.value),
+    autoMode:ui.autoMode.checked,
+    gapFactor:parseFloat(ui.gapFactor.value),
+    lineNumberVisible:ui.lineNumberVisible.checked,
+    displayMode:ui.displayMode.value,
+    displayHue:parseFloat(ui.displayHue.value),
+    displayOpacity:parseFloat(ui.displayOpacity.value),
+    solidContourVisible:ui.solidContourVisible.checked,
+    projection:ui.projection.value,
+    viewSelect:ui.viewSelect.value,
+    panelOpen:ui.app.getAttribute('data-panel')!=='closed',
+    jmaDate:ui.jmaDate.value,
+    jmaTime:ui.jmaTime.value
+  };
+}
+function captureCameraState(){
+  return {
+    type:camera.isOrthographicCamera?'ortho':'persp',
+    position:camera.position.toArray(),
+    quaternion:camera.quaternion.toArray(),
+    target:controls.target.toArray(),
+    zoom:camera.zoom
+  };
+}
+function buildSettingsPackage(){
+  return {
+    app:'3dtenkizu',
+    version:2,
+    savedAt:new Date().toISOString(),
+    settings:captureDisplaySettings(),
+    camera:captureCameraState(),
+    projectSvg:buildProjectSVG(),
+    weatherSvg:lastRawSvgText||'',
+    weatherSource:currentJmaSourceInfo,
+    himawari:{
+      info:currentHimawariInfo,
+      dataUrl:currentHimawariDataUrl||''
+    }
+  };
+}
+function downloadBlob(blob,filename){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1200);
+}
+function doSaveSettings(){
+  const pkg=buildSettingsPackage();
+  const text=JSON.stringify(pkg);
+  downloadBlob(new Blob([text],{type:'application/json'}),'3dtenkizu-settings.json');
+}
+function applyDisplaySettings(s={}){
+  if(s.bgColor) ui.bgColor.value=s.bgColor;
+  if(typeof s.basisVisible==='boolean') ui.basisVisible.checked=s.basisVisible;
+  if(typeof s.gridVisible==='boolean') ui.gridVisible.checked=s.gridVisible;
+  if(isFinite(s.imgOpacity)) ui.imgOpacity.value=String(s.imgOpacity);
+  if(isFinite(s.himawariOpacity)) ui.himawariOpacity.value=String(s.himawariOpacity);
+  if(typeof s.landOverlayVisible==='boolean') ui.landOverlayVisible.checked=s.landOverlayVisible;
+  if(typeof s.mapTextVisible==='boolean') ui.mapTextVisible.checked=s.mapTextVisible;
+  if(typeof s.frontOverlayVisible==='boolean') ui.frontOverlayVisible.checked=s.frontOverlayVisible;
+  if(isFinite(s.overlayThickness)) ui.overlayThickness.value=String(s.overlayThickness);
+  if(isFinite(s.overlayHeight)) ui.overlayHeight.value=String(s.overlayHeight);
+  if(typeof s.autoMode==='boolean') ui.autoMode.checked=s.autoMode;
+  if(isFinite(s.gapFactor)) ui.gapFactor.value=String(s.gapFactor);
+  if(typeof s.lineNumberVisible==='boolean') ui.lineNumberVisible.checked=s.lineNumberVisible;
+  if(s.displayMode&&['pipe','wall','solid'].includes(s.displayMode)) ui.displayMode.value=s.displayMode;
+  if(isFinite(s.displayHue)) ui.displayHue.value=String(s.displayHue);
+  if(isFinite(s.displayOpacity)) ui.displayOpacity.value=String(s.displayOpacity);
+  if(typeof s.solidContourVisible==='boolean') ui.solidContourVisible.checked=s.solidContourVisible;
+  if(s.projection==='ortho'||s.projection==='persp') ui.projection.value=s.projection;
+  if(s.viewSelect) ui.viewSelect.value=s.viewSelect;
+  if(s.jmaDate) ui.jmaDate.value=s.jmaDate;
+  if(s.jmaTime) ui.jmaTime.value=s.jmaTime;
+
+  if(rendererMode==='webgl') scene.background=new THREE.Color(ui.bgColor.value);
+  basis.visible=ui.basisVisible.checked;
+  gridXY.visible=gridZX.visible=ui.gridVisible.checked;
+  applyImageUI();
+  applyHimawariUI();
+  updateWeatherOverlayVisibility();
+  updateWeatherOverlayHeight();
+  updateStyleControlLabels();
+  rebuildAllDisplayGeometry();
+  updateSolidContourUI();
+  updateLineNumberLabels();
+
+  const wantOpen=s.panelOpen!==false;
+  ui.app.setAttribute('data-panel',wantOpen?'open':'closed');
+  ui.panelToggle.dataset.open=wantOpen?'true':'false';
+  ui.panelToggle.setAttribute('aria-label',wantOpen?'設定パネルを閉じる':'設定パネルを開く');
+  updateJmaArchiveLink();
+  resize();
+}
+function restoreCameraState(st){
+  if(!st) return;
+  const want=st.type==='ortho'?'ortho':'persp';
+  if(want==='ortho'&&!camera.isOrthographicCamera) useOrthographic();
+  if(want==='persp'&&!camera.isPerspectiveCamera) usePerspective();
+  ui.projection.value=want;
+  if(Array.isArray(st.position)&&st.position.length===3) camera.position.fromArray(st.position);
+  if(Array.isArray(st.quaternion)&&st.quaternion.length===4) camera.quaternion.fromArray(st.quaternion);
+  if(Number.isFinite(st.zoom)) camera.zoom=st.zoom;
+  if(Array.isArray(st.target)&&st.target.length===3){
+    controls.target.fromArray(st.target);
+    _target.copy(controls.target);
+  }
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+async function loadSettingsPackage(text){
+  let pkg;
+  try{pkg=JSON.parse(text);}catch{throw new Error('設定情報JSONを読み取れません。');}
+  if(pkg?.app!=='3dtenkizu') throw new Error('3D天気図の設定情報ではありません。');
+
+  if(pkg.weatherSvg){
+    try{
+      const doc=new DOMParser().parseFromString(pkg.weatherSvg,'image/svg+xml');
+      const svg=doc.querySelector('svg');
+      if(svg){
+        const {w,h}=normalizeSvgRoot(svg);
+        lastSvgDims={w,h};
+        lastRawSvgText=new XMLSerializer().serializeToString(svg);
+      }
+    }catch{}
+  }
+
+  if(pkg.projectSvg) await loadProjectSVG(pkg.projectSvg);
+
+  // projectSvg内のラッパーではなく、元の気象庁SVGを背景・抽出用に戻す。
+  if(pkg.weatherSvg&&lastSvgDims){
+    lastRawSvgText=pkg.weatherSvg;
+    await buildOrUpdateWeatherPlane(lastRawSvgText);
+    rebuildWeatherFeatureOverlays(lastRawSvgText);
+  }
+
+  currentJmaSourceInfo=pkg.weatherSource||null;
+  currentHimawariInfo=pkg.himawari?.info||null;
+  currentHimawariDataUrl=pkg.himawari?.dataUrl||'';
+
+  applyDisplaySettings(pkg.settings||{});
+
+  if(currentHimawariDataUrl){
+    await setHimawariPlaneFromDataUrl(currentHimawariDataUrl);
+    applyHimawariUI();
+    ui.himawariTimeLabel.textContent=
+      (currentHimawariInfo?.validtime?formatUtc14Jst(currentHimawariInfo.validtime)+'・赤外画像':'保存画像');
+    if(currentHimawariInfo?.sourcePage) ui.himawariSourceLink.href=currentHimawariInfo.sourcePage;
+  }else{
+    if(satellitePlane) satellitePlane.visible=false;
+    ui.himawariTimeLabel.textContent='保存画像なし';
+  }
+
+  restoreCameraState(pkg.camera);
+  setJmaStatus('保存した設定情報を読み込み、表示を再現しました。');
 }
 
 /* ==== 保存SVGの再読込 ==== */
@@ -4233,7 +4403,7 @@ ui.exportMenu.addEventListener('click', (e)=>{
   const act = e.target?.dataset?.act; if(!act) return;
   closeMenus();
   if(act==='export-stl') doExportSTL();
-  if(act==='save-svg')  doSaveSVG();
+  if(act==='save-settings') doSaveSettings();
 });
 
 /* ==== 入出力イベント ==== */
@@ -4257,8 +4427,20 @@ ui.fileRaw.addEventListener('change', async (e)=>{
 });
 ui.fileSaved.addEventListener('change', async (e)=>{
   const f = e.target.files?.[0]; if(!f) return;
-  const text = await f.text();
-  await loadProjectSVG(text);
+  try{
+    const text=await f.text();
+    if((f.name||'').toLowerCase().endsWith('.json')||text.trim().startsWith('{')){
+      await loadSettingsPackage(text);
+    }else{
+      // 旧版で保存した3D天気図SVGも引き続き読み込める。
+      await loadProjectSVG(text);
+    }
+  }catch(err){
+    console.error('設定情報の読み込みエラー',err);
+    setJmaStatus('設定情報を読み込めませんでした。（'+err.message+'）',true);
+  }finally{
+    e.target.value='';
+  }
 });
 
 
