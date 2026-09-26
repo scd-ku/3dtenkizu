@@ -588,6 +588,9 @@ const ui = {
   gridVisible: document.getElementById('gridVisible'),
   imgOpacity: document.getElementById('imgOpacity'),
   lineNumberVisible: document.getElementById('lineNumberVisible'),
+  landOverlayVisible: document.getElementById('landOverlayVisible'),
+  mapTextVisible: document.getElementById('mapTextVisible'),
+  frontOverlayVisible: document.getElementById('frontOverlayVisible'),
   autoMode: document.getElementById('autoMode'),
   gapFactor: document.getElementById('gapFactor'),
   labelInfo: document.getElementById('labelInfo'),
@@ -705,6 +708,11 @@ scene.add(basis);
 /* ==== containers ==== */
 const chartGroup=new THREE.Group(); scene.add(chartGroup);
 const rootLines=new THREE.Group(); chartGroup.add(rootLines);
+const weatherOverlayRoot=new THREE.Group(); chartGroup.add(weatherOverlayRoot);
+const landOverlayGroup=new THREE.Group();
+const mapTextOverlayGroup=new THREE.Group();
+const frontOverlayGroup=new THREE.Group();
+weatherOverlayRoot.add(landOverlayGroup,mapTextOverlayGroup,frontOverlayGroup);
 /* item: pipeMesh, pickPipeMesh, pathPoints, path2D, height, ui, userColor(null=auto), kind */
 let items=[];
 let weatherPlane=null, lastSvgDims=null, lastRawSvgText="";
@@ -2309,6 +2317,7 @@ async function buildOrUpdateWeatherPlane(rawSvgText){
     weatherPlane.position.set(0,0,0);
     weatherPlane.scale.set(1,-1,1);
     applyImageUI();
+    rebuildWeatherFeatureOverlays(rawSvgText);
     return;
   }
 
@@ -2337,6 +2346,7 @@ async function buildOrUpdateWeatherPlane(rawSvgText){
   weatherPlane.position.set(0,0,0);
   weatherPlane.scale.set(1,-1,1);
   applyImageUI();
+  rebuildWeatherFeatureOverlays(rawSvgText);
 }
 function applyImageUI(){
   if(rendererMode==='svg'){
@@ -2351,6 +2361,224 @@ function applyImageUI(){
 }
 ui.imgOpacity.addEventListener('input',applyImageUI);
 ui.lineNumberVisible.addEventListener('change',updateLineNumberLabels);
+ui.landOverlayVisible.addEventListener('change',updateWeatherOverlayVisibility);
+ui.mapTextVisible.addEventListener('change',updateWeatherOverlayVisibility);
+ui.frontOverlayVisible.addEventListener('change',updateWeatherOverlayVisibility);
+
+
+/* ==== 天気図の陸地輪郭・文字・前線オーバーレイ ==== */
+function clearOverlayGroup(group){
+  for(const ch of [...group.children]){
+    disposeObject(ch);
+    group.remove(ch);
+  }
+}
+function svgStyleValue(el,name,root){
+  let cur=el;
+  while(cur&&cur!==root?.parentElement){
+    const attr=cur.getAttribute?.(name);
+    if(attr!=null&&attr!=='') return attr;
+    const style=cur.getAttribute?.('style')||'';
+    const m=style.match(new RegExp('(?:^|;)\\s*'+name+'\\s*:\\s*([^;]+)','i'));
+    if(m) return m[1].trim();
+    cur=cur.parentElement;
+  }
+  return '';
+}
+function svgAncestorTokens(el,root){
+  const out=[];
+  let cur=el;
+  while(cur&&cur!==root?.parentElement){
+    const cls=cur.getAttribute?.('class');
+    const id=cur.getAttribute?.('id');
+    if(cls) out.push(cls);
+    if(id) out.push(id);
+    cur=cur.parentElement;
+  }
+  return out.join(' ');
+}
+function isGreenishPaint(value){
+  const v=String(value||'').trim();
+  if(!v||v==='none'||/^url\(/i.test(v)) return false;
+  try{
+    const col=new THREE.Color();
+    col.setStyle(v);
+    const hsl={h:0,s:0,l:0};
+    col.getHSL(hsl);
+    return hsl.h>.20&&hsl.h<.47&&hsl.s>.18&&hsl.l>.18&&hsl.l<.88;
+  }catch{
+    return false;
+  }
+}
+function featureLineGroupFromElements(svg,elements){
+  const group=new THREE.Group();
+  if(!elements.length) return group;
+
+  const dims=readSvgDims(svg);
+  const doc=document.implementation.createDocument('http://www.w3.org/2000/svg','svg',null);
+  const out=doc.documentElement;
+  out.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  out.setAttribute('viewBox','0 0 '+dims.w+' '+dims.h);
+  out.setAttribute('width',String(dims.w));
+  out.setAttribute('height',String(dims.h));
+
+  for(const el of elements){
+    const dup=el.cloneNode(true);
+    const tm=cumulativeElementTransform(el,svg);
+    dup.setAttribute('transform','matrix('+[tm.a,tm.b,tm.c,tm.d,tm.e,tm.f].join(' ')+')');
+    dup.setAttribute('fill','none');
+    dup.setAttribute('stroke','#111111');
+    dup.setAttribute('stroke-width','1.1');
+    dup.removeAttribute('clip-path');
+    dup.removeAttribute('mask');
+    dup.removeAttribute('filter');
+    out.appendChild(dup);
+  }
+
+  try{
+    const loader=new SVGLoader();
+    const parsed=loader.parse(new XMLSerializer().serializeToString(out));
+    for(const p of parsed.paths){
+      for(const sub of p.subPaths){
+        const pts2=sub.getPoints(100);
+        if(pts2.length<2) continue;
+        const pts=pts2.map(pt=>new THREE.Vector3(+pt.x,-pt.y,0));
+        const geom=new THREE.BufferGeometry().setFromPoints(pts);
+        const mat=new THREE.LineBasicMaterial({
+          color:0x111111,transparent:true,opacity:.96,depthTest:true,depthWrite:false
+        });
+        const line=new THREE.Line(geom,mat);
+        line.renderOrder=30;
+        group.add(line);
+      }
+    }
+  }catch(err){
+    console.warn('weather feature overlay parse failed',err);
+  }
+  return group;
+}
+function createMapTextPlane(text,fontSize=12,anchor='start',rotation=0){
+  const fsPx=48;
+  const pad=12;
+  const probe=document.createElement('canvas').getContext('2d');
+  probe.font='700 '+fsPx+'px "M PLUS Rounded 1c","Yu Gothic",sans-serif';
+  const measured=Math.max(20,probe.measureText(text).width);
+  const cw=Math.min(1200,Math.ceil(measured+pad*2));
+  const ch=72;
+  const canvas=document.createElement('canvas');
+  canvas.width=cw;canvas.height=ch;
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,cw,ch);
+  ctx.font='700 '+fsPx+'px "M PLUS Rounded 1c","Yu Gothic",sans-serif';
+  ctx.textAlign='left';ctx.textBaseline='middle';
+  ctx.lineJoin='round';
+  ctx.lineWidth=3;
+  ctx.strokeStyle='rgba(255,255,255,.78)';
+  ctx.strokeText(text,pad,ch/2);
+  ctx.fillStyle='#111';
+  ctx.fillText(text,pad,ch/2);
+
+  const tex=new THREE.CanvasTexture(canvas);
+  tex.colorSpace=THREE.SRGBColorSpace;
+  tex.minFilter=THREE.LinearFilter;
+  tex.magFilter=THREE.LinearFilter;
+
+  const worldH=Math.max(7,fontSize*1.12);
+  const worldW=worldH*(cw/ch);
+  const geom=new THREE.PlaneGeometry(worldW,worldH);
+  const mat=new THREE.MeshBasicMaterial({
+    map:tex,transparent:true,side:THREE.DoubleSide,depthTest:true,depthWrite:false
+  });
+  const mesh=new THREE.Mesh(geom,mat);
+  mesh.renderOrder=35;
+  mesh.rotation.z=rotation;
+  mesh.userData.textWidth=worldW;
+  mesh.userData.textHeight=worldH;
+  mesh.userData.textAnchor=anchor;
+  return mesh;
+}
+function rebuildWeatherFeatureOverlays(rawSvgText){
+  clearOverlayGroup(landOverlayGroup);
+  clearOverlayGroup(mapTextOverlayGroup);
+  clearOverlayGroup(frontOverlayGroup);
+  if(!rawSvgText||!lastSvgDims) return;
+
+  try{
+    const doc=new DOMParser().parseFromString(rawSvgText,'image/svg+xml');
+    const svg=doc.querySelector('svg');
+    if(!svg) return;
+    const bounds=detectWeatherMapInnerBounds(rawSvgText,lastSvgDims);
+
+    const geometryEls=[...svg.querySelectorAll('path,polyline,polygon,line')];
+
+    const landEls=geometryEls.filter(el=>{
+      const tokens=svgAncestorTokens(el,svg);
+      if(/contour|front|warm|cold|occl|stnfront|trough/i.test(tokens)) return false;
+      if(/land|coast|shore/i.test(tokens)) return true;
+      return isGreenishPaint(svgStyleValue(el,'fill',svg));
+    });
+
+    const frontEls=geometryEls.filter(el=>{
+      const tokens=svgAncestorTokens(el,svg);
+      return /(warmfront|coldfront|occfront|occluded|stnfront|stationaryfront|front|trough)/i.test(tokens);
+    });
+
+    const landLines=featureLineGroupFromElements(svg,landEls);
+    while(landLines.children.length) landOverlayGroup.add(landLines.children[0]);
+
+    const frontLines=featureLineGroupFromElements(svg,frontEls);
+    while(frontLines.children.length) frontOverlayGroup.add(frontLines.children[0]);
+
+    if(rendererMode==='webgl'){
+      const textNodes=[...svg.querySelectorAll('g#weatherChart text, text')];
+      for(const t of textNodes){
+        const txt=(t.textContent||'').replace(/\s+/g,' ').trim();
+        if(!txt||txt.length>18) continue;
+        const p=estimateXY(t);
+        const x=p.x,y=-p.y;
+        if(x<bounds.minX||x>bounds.maxX||y<bounds.minY||y>bounds.maxY) continue;
+
+        const rawFs=parseFloat(svgStyleValue(t,'font-size',svg)||'12')||12;
+        const tm=cumulativeElementTransform(t,svg);
+        const scale=Math.max(.35,Math.hypot(tm.a,tm.b)||1);
+        const fs=Math.min(28,Math.max(7,rawFs*scale));
+        const anchor=(svgStyleValue(t,'text-anchor',svg)||'start').toLowerCase();
+        const rot=-Math.atan2(tm.b,tm.a);
+        const mesh=createMapTextPlane(txt,fs,anchor,rot);
+        const w=mesh.userData.textWidth||0;
+        let dx=0;
+        if(anchor==='start') dx=w/2;
+        else if(anchor==='end') dx=-w/2;
+        mesh.position.set(x+dx,y+(mesh.userData.textHeight||0)*.18,0);
+        mapTextOverlayGroup.add(mesh);
+      }
+    }
+
+    const w=lastSvgDims.w,h=lastSvgDims.h;
+    weatherOverlayRoot.position.x=-w/2;
+    weatherOverlayRoot.position.y=h/2;
+    updateWeatherOverlayHeight();
+    updateWeatherOverlayVisibility();
+
+    console.info('weather overlays:',
+      'land',landOverlayGroup.children.length,
+      'text',mapTextOverlayGroup.children.length,
+      'front',frontOverlayGroup.children.length
+    );
+  }catch(err){
+    console.warn('weather overlay extraction failed',err);
+  }
+}
+function updateWeatherOverlayHeight(){
+  const visible=items.filter(it=>it.ui?.vis?.checked??true);
+  const maxLocal=visible.length?Math.max(0,...visible.map(it=>it.height*HEIGHT_SCALE)):0;
+  weatherOverlayRoot.position.z=maxLocal+Math.max(PIPE_RADIUS*4.2,6);
+}
+function updateWeatherOverlayVisibility(){
+  landOverlayGroup.visible=!!ui.landOverlayVisible?.checked;
+  mapTextOverlayGroup.visible=!!ui.mapTextVisible?.checked;
+  frontOverlayGroup.visible=!!ui.frontOverlayVisible?.checked;
+}
 
 /* ==== SVG → items ==== */
 function centroidXY(pts){ let sx=0,sy=0; for(const p of pts){sx+=p.x;sy+=p.y;} const n=pts.length||1; return {x:sx/n,y:sy/n}; }
@@ -2892,6 +3120,7 @@ function updateHeightsAndColors(){
     applyItemAppearance(it);
   }
   updateLineNumberLabels();
+  updateWeatherOverlayHeight();
   rebuildSolidTerrain();
 }
 
@@ -3336,7 +3565,10 @@ function buildProjectSVG(){
     displayHue: parseFloat(ui.displayHue.value),
     displayOpacity: parseFloat(ui.displayOpacity.value),
     solidContourVisible: ui.solidContourVisible.checked,
-    lineNumberVisible: ui.lineNumberVisible.checked
+    lineNumberVisible: ui.lineNumberVisible.checked,
+    landOverlayVisible: ui.landOverlayVisible.checked,
+    mapTextVisible: ui.mapTextVisible.checked,
+    frontOverlayVisible: ui.frontOverlayVisible.checked
   });
   svg.appendChild(meta);
 
@@ -3422,7 +3654,11 @@ async function loadProjectSVG(svgText){
     if(isFinite(meta?.displayOpacity)) ui.displayOpacity.value=String(meta.displayOpacity);
     if(typeof meta?.solidContourVisible==='boolean') ui.solidContourVisible.checked=meta.solidContourVisible;
     if(typeof meta?.lineNumberVisible==='boolean') ui.lineNumberVisible.checked=meta.lineNumberVisible;
+    if(typeof meta?.landOverlayVisible==='boolean') ui.landOverlayVisible.checked=meta.landOverlayVisible;
+    if(typeof meta?.mapTextVisible==='boolean') ui.mapTextVisible.checked=meta.mapTextVisible;
+    if(typeof meta?.frontOverlayVisible==='boolean') ui.frontOverlayVisible.checked=meta.frontOverlayVisible;
     updateStyleControlLabels();
+    updateWeatherOverlayVisibility();
     updateSolidContourUI();
   }catch{}
 
