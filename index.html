@@ -382,7 +382,7 @@
         <input id="solidContourVisible" type="checkbox" checked title="立体モードで等圧線を表示">
       </div>
       <div class="muted" style="margin:.15rem 0 .65rem">
-        色は高さに応じて赤→青へ変化します。色相補正で全体の色味を調整できます。<br>壁：パイプと同じ幅の壁面　／　立体：閉じた等圧線も開いた等圧線も、天気図外枠と合わせて領域化し、等圧線の高さで段状の面を張ります
+        色は高さに応じて赤→青へ変化します。色相補正で全体の色味を調整できます。<br>壁：パイプと同じ幅の壁面　／　立体：パイプ表示の等圧線形状をそのまま使い、隣り合う等圧線の間を段状の面で接続します
       </div>
     </div>
 
@@ -1615,132 +1615,176 @@ function lowerContourLevelForItem(it,visibleItems,minLocalHeight){
   }
   return lower;
 }
+function symmetricPolylineDistance(a,b){
+  const A=decimatePoints(a.pathPoints,48);
+  const B=decimatePoints(b.pathPoints,48);
+  if(!A.length||!B.length) return Infinity;
+
+  const meanNearest=(P,Q)=>{
+    let sum=0;
+    for(const p of P){
+      let best=Infinity;
+      for(const q of Q) best=Math.min(best,p.distanceTo(q));
+      sum+=best;
+    }
+    return sum/P.length;
+  };
+  return (meanNearest(A,B)+meanNearest(B,A))*.5;
+}
+function openContourAdjacency(openItems,bounds){
+  const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
+  const levels=[...new Set(openItems.map(it=>it.height))].sort((a,b)=>a-b);
+  const rank=new Map(levels.map((h,i)=>[h,i]));
+  const pairs=new Map();
+
+  const addPair=(a,b,score)=>{
+    if(!a||!b||a===b) return;
+    const ia=items.indexOf(a),ib=items.indexOf(b);
+    const key=ia<ib?ia+':'+ib:ib+':'+ia;
+    const old=pairs.get(key);
+    if(!old||score<old.score) pairs.set(key,{a,b,score});
+  };
+
+  for(const a of openItems){
+    const ra=rank.get(a.height)??0;
+    let bestLower=null,bestHigher=null,bestAny=null;
+
+    for(const b of openItems){
+      if(a===b) continue;
+      const rb=rank.get(b.height)??0;
+      const rankDiff=Math.abs(rb-ra);
+      if(rankDiff>4&&levels.length>4) continue;
+
+      const dist=symmetricPolylineDistance(a,b);
+      const score=dist+diag*.012*rankDiff;
+      if(score>diag*.24) continue;
+
+      if(!bestAny||score<bestAny.score) bestAny={b,score};
+      if(b.height<a.height-1e-6&&(!bestLower||score<bestLower.score)) bestLower={b,score};
+      if(b.height>a.height+1e-6&&(!bestHigher||score<bestHigher.score)) bestHigher={b,score};
+    }
+
+    if(bestLower) addPair(a,bestLower.b,bestLower.score);
+    if(bestHigher) addPair(a,bestHigher.b,bestHigher.score);
+    if(!bestLower&&!bestHigher&&bestAny) addPair(a,bestAny.b,bestAny.score);
+  }
+
+  return [...pairs.values()].sort((x,y)=>x.score-y.score);
+}
+function addOpenFrameCap(group,it,bounds,color,z){
+  const candidates=openSideCandidates(it,bounds);
+  if(!candidates?.length) return false;
+
+  // 最外側の補完は巨大な全面板にならないよう、外枠で閉じた小さい側だけ使う。
+  candidates.sort((a,b)=>a.area-b.area);
+  const mapArea=(bounds.maxX-bounds.minX)*(bounds.maxY-bounds.minY);
+  const cap=candidates[0];
+  if(!cap||cap.area>mapArea*.42) return false;
+
+  const geom=buildShapeGeometryFromPolygon(cap.points);
+  addTerrainMesh(group,geom,color,z);
+  return true;
+}
 function buildExactContourTerrain(){
   const group=new THREE.Group();
   const visibleItems=items.filter(it=>it.ui?.vis?.checked??true);
   if(!visibleItems.length) return group;
 
+  computeContourHierarchy();
+
   const canvasW=lastSvgDims?.w||1000;
   const canvasH=lastSvgDims?.h||1000;
   const bounds={minX:0,minY:-canvasH,maxX:canvasW,maxY:0};
-  const maxH=currentMaxHeightStrict();
   const minHeight=Math.min(0,...visibleItems.map(it=>it.height*HEIGHT_SCALE));
+  const maxH=currentMaxHeightStrict();
 
-  // 各等圧線の高い側領域は保持するが、高さ判定には
-  // 「そのポリゴンの境界を実際に構成する等圧線」だけを使う。
-  const sideRegionByItem=new Map();
-  for(const it of visibleItems){
-    sideRegionByItem.set(it,highSideMultiPolygon(it,bounds));
-  }
+  // 天気図範囲だけを最低面にする。
+  const base=buildShapeGeometryFromPolygon([
+    new THREE.Vector3(bounds.minX,bounds.minY,0),
+    new THREE.Vector3(bounds.maxX,bounds.minY,0),
+    new THREE.Vector3(bounds.maxX,bounds.maxY,0),
+    new THREE.Vector3(bounds.minX,bounds.maxY,0)
+  ]);
+  addTerrainMesh(group,base,heightColorForValue(minHeight/HEIGHT_SCALE,maxH),minHeight);
 
-  // 天気図外枠と全等圧線を、接続点を共有する完全にノード化された線網にする。
-  const contourFeatures=[];
-  const contourRecords=[];
-  const frameNodes=[];
-  for(const it of visibleItems){
-    const line=contourLineForPolygonize(it,bounds);
-    if(!line?.coords?.length) continue;
-    try{
-      contourFeatures.push(turf.lineString(line.coords,{kind:'isobar'}));
-      contourRecords.push({it,coords:line.coords});
-      if(line.open) frameNodes.push(...line.frameNodes);
-    }catch(err){
-      console.warn('contour line creation failed',err);
-    }
-  }
-  const frameFeatures=buildNodedFrameFeatures(bounds,frameNodes);
-  const lineFeatures=[...frameFeatures,...contourFeatures];
+  const visibleSet=new Set(visibleItems);
 
-  let cells;
-  try{
-    const cleaned=lineFeatures.map(f=>turf.cleanCoords(f));
-    cells=turf.polygonize(turf.featureCollection(cleaned));
-  }catch(err){
-    console.error('terrain polygonize failed',err);
-    // 立体表示全体を消さず、少なくとも等圧線の垂直面は残す。
-    cells=turf.featureCollection([]);
-  }
-
-  // polygonize で得た各面に、その位置で成立する最も高い等圧線レベルを割り当てる。
-  // これにより水平面の境界は必ず元の等圧線になる。
-  const cellInfos=[];
-  for(const feature of (cells.features||[])){
-    const outer=feature.geometry?.coordinates?.[0]||[];
-    const distinct=outer.filter((p,i,a)=>a.findIndex(q=>almostSameXY(p,q,1e-6))===i);
-    if(outer.length<4||distinct.length<3) continue;
-
-    let sample;
-    try{
-      const pf=turf.pointOnFeature(feature);
-      sample={x:pf.geometry.coordinates[0],y:pf.geometry.coordinates[1]};
-    }catch{
-      if(!outer.length) continue;
-      sample={x:outer[0][0],y:outer[0][1]};
-    }
-
-    if(sample.x<bounds.minX-1e-6||sample.x>bounds.maxX+1e-6||
-       sample.y<bounds.minY-1e-6||sample.y>bounds.maxY+1e-6) continue;
-
-    const tol=Math.max(canvasW,canvasH)*2e-4;
-    const boundaryItems=[];
-    for(const rec of contourRecords){
-      if(cellBoundaryUsesContour(outer,rec.coords,tol)){
-        boundaryItems.push(rec.it);
-      }
-    }
-
-    // 面の高さは、その面を実際に囲む等圧線だけから決める。
-    // 等圧線の高い側にある場合はその等圧線高さ、
-    // 低い側なら一つ下の等圧線レベルを候補にする。
-    let h=minHeight/HEIGHT_SCALE;
-    for(const it of boundaryItems){
-      const region=sideRegionByItem.get(it);
-      const highSide=region?.length&&pointInMultiPolygonXY(sample,region);
-      if(highSide){
-        h=Math.max(h,it.height);
-      }else{
-        h=Math.max(h,lowerContourLevelForItem(it,visibleItems,minHeight/HEIGHT_SCALE));
-      }
-    }
-
-    const geom=turfPolygonToShapeGeometry(feature);
-    if(!geom) continue;
-    cellInfos.push({feature,height:h,geom,boundaryCount:boundaryItems.length});
-  }
-
-  for(const cell of cellInfos){
-    addTerrainMesh(
-      group,
-      cell.geom,
-      heightColorForValue(cell.height,maxH),
-      cell.height*HEIGHT_SCALE
-    );
-  }
-
-  // 段差の垂直面はパイプ表示と同じ等圧線そのものを使う。
-  const levels=[...new Set(visibleItems.map(it=>it.height))].sort((a,b)=>a-b);
-  for(const it of visibleItems){
+  // 閉じた等圧線は、実際のパイプ形状の親子関係をそのままコンター段にする。
+  for(const it of visibleItems.filter(x=>x.isClosed)){
     const z=it.height*HEIGHT_SCALE;
-    let lower=minHeight;
-    for(const h of levels){
-      if(h<it.height-1e-6) lower=Math.max(lower,h*HEIGHT_SCALE);
-      else break;
-    }
-    const dz=z-lower;
-    if(Math.abs(dz)<.01) continue;
+    const top=buildTerraceTopGeometry(it);
+    addTerrainMesh(group,top,heightColorForItem(it),z);
 
+    const parent=(it.parentContour&&visibleSet.has(it.parentContour))?it.parentContour:null;
+    const parentZ=parent?parent.height*HEIGHT_SCALE:minHeight;
+    const dz=z-parentZ;
+    if(Math.abs(dz)>.01){
+      addTerrainMesh(
+        group,
+        buildCurtainGeometry(it.pathPoints,true),
+        heightColorForItem(it),
+        Math.min(z,parentZ),
+        Math.abs(dz)
+      );
+    }
+  }
+
+  // 開いた等圧線は、空間的に隣り合うパイプ同士を直接ストリップ面で接続する。
+  const open=visibleItems.filter(x=>!x.isClosed);
+  const pairs=openContourAdjacency(open,bounds);
+  const degree=new Map(open.map(it=>[it,0]));
+
+  for(const pair of pairs){
+    const a=pair.a,b=pair.b;
+    degree.set(a,(degree.get(a)||0)+1);
+    degree.set(b,(degree.get(b)||0)+1);
+
+    const low=a.height<=b.height?a:b;
+    const high=low===a?b:a;
+    const zLow=low.height*HEIGHT_SCALE;
+    const zHigh=high.height*HEIGHT_SCALE;
+
+    // 2本のパイプ間の水平な段面。
     addTerrainMesh(
       group,
-      buildCurtainGeometry(it.pathPoints,it.isClosed),
-      heightColorForItem(it),
-      Math.min(z,lower),
-      Math.abs(dz)
+      buildBandBetweenContours(a,b,zLow),
+      heightColorForValue(low.height,maxH),
+      0
     );
+
+    // 次の高さへの段差は、高い側のパイプそのものの位置。
+    if(Math.abs(zHigh-zLow)>.01){
+      addTerrainMesh(
+        group,
+        buildCurtainGeometry(high.pathPoints,false),
+        heightColorForItem(high),
+        Math.min(zLow,zHigh),
+        Math.abs(zHigh-zLow)
+      );
+    }
+  }
+
+  // 隣接線を持たない最外側の開放等圧線は、天気図外枠まで面を補う。
+  for(const it of open){
+    if((degree.get(it)||0)>0) continue;
+    const z=it.height*HEIGHT_SCALE;
+    addOpenFrameCap(group,it,bounds,heightColorForItem(it),z);
+    if(Math.abs(z-minHeight)>.01){
+      addTerrainMesh(
+        group,
+        buildCurtainGeometry(it.pathPoints,false),
+        heightColorForItem(it),
+        Math.min(z,minHeight),
+        Math.abs(z-minHeight)
+      );
+    }
   }
 
   console.info(
-    'solid terrain polygonized cells:',cellInfos.length,
-    'boundary matches:',cellInfos.map(c=>c.boundaryCount)
+    'solid terrain direct strips:',
+    'closed',visibleItems.filter(x=>x.isClosed).length,
+    'open',open.length,
+    'pairs',pairs.length
   );
   return group;
 }
@@ -1873,6 +1917,65 @@ ui.imgOpacity.addEventListener('input',applyImageUI);
 function centroidXY(pts){ let sx=0,sy=0; for(const p of pts){sx+=p.x;sy+=p.y;} const n=pts.length||1; return {x:sx/n,y:sy/n}; }
 function polygonArea(pts){ let a=0; for(let i=0;i<pts.length;i++){ const p=pts[i], q=pts[(i+1)%pts.length]; a += p.x*q.y - q.x*p.y; } return Math.abs(a)/2; }
 
+function endpointGapScore(a,b){
+  return a.distanceTo(b);
+}
+function orientAndMergeSegments(a,b,threshold){
+  const candidates=[
+    {d:endpointGapScore(a[a.length-1],b[0]),A:a,B:b},
+    {d:endpointGapScore(a[a.length-1],b[b.length-1]),A:a,B:b.slice().reverse()},
+    {d:endpointGapScore(a[0],b[0]),A:a.slice().reverse(),B:b},
+    {d:endpointGapScore(a[0],b[b.length-1]),A:a.slice().reverse(),B:b.slice().reverse()}
+  ].sort((x,y)=>x.d-y.d);
+  const best=candidates[0];
+  if(!best||best.d>threshold) return null;
+
+  const merged=best.A.map(p=>p.clone());
+  const gap=best.B[0].clone().sub(best.A[best.A.length-1]);
+  const gapLen=gap.length();
+  if(gapLen>threshold*.15){
+    // SVGのラベルで切れた箇所を自然に直線補間する。
+    const n=Math.max(1,Math.min(5,Math.round(gapLen/(threshold*.25))));
+    for(let k=1;k<=n;k++){
+      merged.push(best.A[best.A.length-1].clone().lerp(best.B[0],k/(n+1)));
+    }
+  }
+  for(const p of best.B) merged.push(p.clone());
+  return merged;
+}
+function stitchSubpathSegments(segments){
+  const diag=Math.hypot(lastSvgDims?.w||1000,lastSvgDims?.h||1000);
+  const threshold=diag*.035;
+  const work=segments.map(s=>s.map(p=>p.clone())).filter(s=>s.length>=2);
+
+  let changed=true;
+  while(changed&&work.length>1){
+    changed=false;
+    let best=null;
+    for(let i=0;i<work.length;i++){
+      for(let j=i+1;j<work.length;j++){
+        const pairs=[
+          work[i][0].distanceTo(work[j][0]),
+          work[i][0].distanceTo(work[j][work[j].length-1]),
+          work[i][work[i].length-1].distanceTo(work[j][0]),
+          work[i][work[i].length-1].distanceTo(work[j][work[j].length-1])
+        ];
+        const d=Math.min(...pairs);
+        if(d<=threshold&&(!best||d<best.d)) best={i,j,d};
+      }
+    }
+    if(best){
+      const merged=orientAndMergeSegments(work[best.i],work[best.j],threshold);
+      if(merged){
+        work[best.i]=merged;
+        work.splice(best.j,1);
+        changed=true;
+      }
+    }
+  }
+  return work;
+}
+
 async function loadSVGFromString(svgText){
   rootLines.clear(); items=[]; ui.list.innerHTML='';
 
@@ -1891,19 +1994,32 @@ async function loadSVGFromString(svgText){
 
   let pathIndex=0;
   for(const p of data.paths){
+    const sourcePathIndex=pathIndex;
     const meta=lineMeta[pathIndex++]||{kind:'normal',step:4};
+
+    const rawSegments=[];
+    let anyAutoClosed=false;
     for(const sub of p.subPaths){
-      const pts2=sub.getPoints(Math.max(2,sampleN)); if(pts2.length<2) continue;
-      const pts3=pts2.map(pt=>new THREE.Vector3(+pt.x,-pt.y,0));
+      const pts2=sub.getPoints(Math.max(2,sampleN));
+      if(pts2.length<2) continue;
+      rawSegments.push(pts2.map(pt=>new THREE.Vector3(+pt.x,-pt.y,0)));
+      if(sub.autoClose) anyAutoClosed=true;
+    }
+
+    const stitched=stitchSubpathSegments(rawSegments);
+    for(const pts3 of stitched){
+      if(pts3.length<2) continue;
+      const pts2=pts3.map(v=>({x:v.x,y:-v.y}));
       const cen=centroidXY(pts2), area=polygonArea(pts2);
       const it={
         pipeMesh:null,pickPipeMesh:null,
         activePick:null,
-        pathPoints:pts3,path2D:pts2.map(pt=>({x:+pt.x,y:+pt.y})),
-        isClosed:!!sub.autoClose || isClosedContour(pts3),
+        pathPoints:pts3,path2D:pts2,
+        isClosed:anyAutoClosed || isClosedContour(pts3),
         height:0,ui:{},centroid:cen,pressure:undefined,area,autoTarget:0,
         userColor:null,kind:'svg',geometryMode:'pipe',
-        isobarKind:meta.kind,isobarStep:meta.step,pressureSource:''
+        isobarKind:meta.kind,isobarStep:meta.step,pressureSource:'',
+        sourcePathIndex
       };
       items.push(it);
     }
@@ -2391,8 +2507,9 @@ function classifyIsobarElement(el,contour,w,h){
   const minDim=Math.max(1,Math.min(w,h));
   if(stats.pts.length<3) return null;
 
-  // 等圧線ラベルやラベル背景のような小さなベクトル要素を除外する。
-  if(stats.diag<minDim*0.035&&stats.spanX<minDim*0.03&&stats.spanY<minDim*0.03) return null;
+  // 短い等圧線断片も保持する。気圧ラベルは下のtransform判定で除外する。
+  // 以前の3.5%閾値では、地図右下などの正規の短い等圧線まで落ちていた。
+  if(stats.diag<minDim*0.006&&stats.spanX<minDim*0.005&&stats.spanY<minDim*0.005) return null;
 
   // 旧仕様では非単位matrix + fill=none の小要素は気圧値ラベル。
   let cur=el.parentElement;
