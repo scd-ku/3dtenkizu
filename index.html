@@ -2858,6 +2858,59 @@ function elementInsideWeatherBounds(el,svg,bounds){
   return p.x>=bounds.minX-pad&&p.x<=bounds.maxX+pad&&
          p.y>=bounds.minY-pad&&p.y<=bounds.maxY+pad;
 }
+function buildStraightTubeGeometry(points,radius){
+  const path=new THREE.CurvePath();
+  for(let i=0;i<points.length-1;i++){
+    if(points[i].distanceTo(points[i+1])<1e-6) continue;
+    path.add(new THREE.LineCurve3(points[i].clone(),points[i+1].clone()));
+  }
+  const seg=Math.max(8,Math.min(4096,(points.length-1)*3));
+  return new THREE.TubeGeometry(path,seg,radius,10,false);
+}
+function elementWorldBounds(el,svg){
+  const pts=numericPointsFromElement(el);
+  if(!pts.length) return null;
+  const tm=cumulativeElementTransform(el,svg);
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  for(const p of pts){
+    const q=transformPoint2D(p,tm);
+    if(!Number.isFinite(q.x)||!Number.isFinite(q.y)) continue;
+    minX=Math.min(minX,q.x);maxX=Math.max(maxX,q.x);
+    minY=Math.min(minY,-q.y);maxY=Math.max(maxY,-q.y);
+  }
+  return Number.isFinite(minX)?{minX,maxX,minY,maxY}:null;
+}
+function isFrameLikeElement(el,svg,bounds){
+  const b=elementWorldBounds(el,svg);
+  if(!b) return false;
+  const fw=Math.max(1,bounds.maxX-bounds.minX);
+  const fh=Math.max(1,bounds.maxY-bounds.minY);
+  return ((b.maxX-b.minX)/fw>.82 && (b.maxY-b.minY)/fh>.82);
+}
+function addExactWeatherFrame(group,bounds){
+  const pts=[
+    new THREE.Vector3(bounds.minX,bounds.minY,0),
+    new THREE.Vector3(bounds.maxX,bounds.minY,0),
+    new THREE.Vector3(bounds.maxX,bounds.maxY,0),
+    new THREE.Vector3(bounds.minX,bounds.maxY,0),
+    new THREE.Vector3(bounds.minX,bounds.minY,0)
+  ];
+  let obj;
+  if(rendererMode==='webgl'){
+    const radius=Math.max(.25,parseFloat(ui.overlayThickness?.value)||1.2);
+    obj=new THREE.Mesh(
+      buildStraightTubeGeometry(pts,radius),
+      new THREE.MeshBasicMaterial({color:0x080808,depthTest:true,depthWrite:true})
+    );
+  }else{
+    obj=new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({color:0x080808,depthTest:true,depthWrite:true})
+    );
+  }
+  obj.renderOrder=30;
+  group.add(obj);
+}
 function featureLineGroupFromElements(svg,elements){
   const group=new THREE.Group();
   if(!elements.length) return group;
@@ -2894,7 +2947,7 @@ function featureLineGroupFromElements(svg,elements){
         const pts=pts2.map(pt=>new THREE.Vector3(+pt.x,-pt.y,0));
         let obj;
         if(rendererMode==='webgl'){
-          const geom=buildTubeGeometry(pts,radius);
+          const geom=buildStraightTubeGeometry(pts,radius);
           const mat=new THREE.MeshBasicMaterial({
             color:0x080808,transparent:false,depthTest:true,depthWrite:true
           });
@@ -2971,7 +3024,7 @@ function rebuildWeatherFeatureOverlays(rawSvgText){
     // 色から推定せず、構造を直接使う。
     let landEls=[
       ...svg.querySelectorAll('g#map g.map polyline, g#map g.map path')
-    ].filter(el=>elementInsideWeatherBounds(el,svg,bounds));
+    ].filter(el=>elementInsideWeatherBounds(el,svg,bounds) && !isFrameLikeElement(el,svg,bounds));
 
     // 旧形式・変形SVGへのフォールバック。
     if(!landEls.length){
@@ -2980,7 +3033,8 @@ function rebuildWeatherFeatureOverlays(rawSvgText){
         const tokens=svgAncestorTokens(el,svg);
         return /(?:^|\s)(?:map|land|coast|shore)(?:\s|$)/i.test(tokens) &&
           !/latlon/i.test(tokens) &&
-          elementInsideWeatherBounds(el,svg,bounds);
+          elementInsideWeatherBounds(el,svg,bounds) &&
+          !isFrameLikeElement(el,svg,bounds);
       });
     }
 
@@ -2992,7 +3046,7 @@ function rebuildWeatherFeatureOverlays(rawSvgText){
         'g#weatherChart g.occFront path, g#weatherChart g.occFront polyline,'+
         'g#weatherChart g.stnFront path, g#weatherChart g.stnFront polyline'
       )
-    ].filter(el=>elementInsideWeatherBounds(el,svg,bounds));
+    ].filter(el=>elementInsideWeatherBounds(el,svg,bounds) && !isFrameLikeElement(el,svg,bounds));
 
     // 気象庁SVGでは文字や数値も path / polyline で描かれる。
     // 等圧線本体と前線を除き、等圧線ラベル・高低気圧等の注記を複製。
@@ -3000,7 +3054,7 @@ function rebuildWeatherFeatureOverlays(rawSvgText){
       ...svg.querySelectorAll('g#weatherChart path, g#weatherChart polyline')
     ];
     const annotationEls=weatherGeometry.filter(el=>{
-      if(!elementInsideWeatherBounds(el,svg,bounds)) return false;
+      if(!elementInsideWeatherBounds(el,svg,bounds) || isFrameLikeElement(el,svg,bounds)) return false;
       const tokens=svgAncestorTokens(el,svg);
       if(/warmFront|coldFront|occFront|stnFront/i.test(tokens)) return false;
 
@@ -3014,6 +3068,8 @@ function rebuildWeatherFeatureOverlays(rawSvgText){
 
     const landLines=featureLineGroupFromElements(svg,landEls);
     while(landLines.children.length) landOverlayGroup.add(landLines.children[0]);
+    // 外枠は抽出元の曲線補間を使わず、検出した天気図黒枠から正確な四角形を生成する。
+    addExactWeatherFrame(landOverlayGroup,bounds);
 
     const frontLines=featureLineGroupFromElements(svg,frontEls);
     while(frontLines.children.length) frontOverlayGroup.add(frontLines.children[0]);
@@ -3065,8 +3121,11 @@ function rebuildWeatherFeatureOverlays(rawSvgText){
 function updateWeatherOverlayHeight(){
   const visible=items.filter(it=>it.ui?.vis?.checked??true);
   const maxLocal=visible.length?Math.max(0,...visible.map(it=>it.height*HEIGHT_SCALE)):0;
-  const extra=Math.max(2,parseFloat(ui.overlayHeight?.value)||18);
-  weatherOverlayRoot.position.z=maxLocal+extra;
+  const raw=parseFloat(ui.overlayHeight?.value);
+  const t=THREE.MathUtils.clamp(Number.isFinite(raw)?raw:1,0,1);
+  const topZ=maxLocal+Math.max(PIPE_RADIUS*1.8,4);
+  // 左端では天気図面と同じ高さ、右端では最高の等圧線より少し上。
+  weatherOverlayRoot.position.z=THREE.MathUtils.lerp(0,topZ,t);
 }
 function updateWeatherOverlayVisibility(){
   landOverlayGroup.visible=!!ui.landOverlayVisible?.checked;
@@ -4205,7 +4264,10 @@ function applyDisplaySettings(s={}){
   if(typeof s.mapTextVisible==='boolean') ui.mapTextVisible.checked=s.mapTextVisible;
   if(typeof s.frontOverlayVisible==='boolean') ui.frontOverlayVisible.checked=s.frontOverlayVisible;
   if(isFinite(s.overlayThickness)) ui.overlayThickness.value=String(s.overlayThickness);
-  if(isFinite(s.overlayHeight)) ui.overlayHeight.value=String(s.overlayHeight);
+  if(isFinite(s.overlayHeight)){
+    const oh=Number(s.overlayHeight);
+    ui.overlayHeight.value=String(oh>1?1:THREE.MathUtils.clamp(oh,0,1));
+  }
   if(typeof s.autoMode==='boolean') ui.autoMode.checked=s.autoMode;
   if(isFinite(s.gapFactor)) ui.gapFactor.value=String(s.gapFactor);
   if(typeof s.lineNumberVisible==='boolean') ui.lineNumberVisible.checked=s.lineNumberVisible;
