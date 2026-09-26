@@ -159,6 +159,13 @@
   .menu button:hover{background:#f1f5f9}
   .menu .sep{height:1px; background:#e5e7eb; margin:.25rem .25rem}
   .card.focus-ring{outline:2px solid var(--accent); box-shadow:0 0 0 4px #4f46e530}
+  .card.selected{
+    background:#ff8a00;border-color:#ff8a00;color:#fff;
+    box-shadow:0 6px 18px #ff8a0035
+  }
+  .card.selected .chip{background:#fff;border-color:#fff;color:#c75b00}
+  .card.selected .muted,.card.selected .small,.card.selected label{color:#fff}
+  .card.selected input[type=number]{background:#fff;color:#111827;border-color:#fff}
 
   /* スライダーを少し太く・大きめに */
   input[type=range]{width:220px}
@@ -341,6 +348,7 @@
       <div class="row"><label>自動高さ</label><input id="autoMode" type="checkbox"></div>
       <div class="row"><label>間隔</label><input id="gapFactor" type="range" min="0.2" max="1" step="0.02" value="0.82"></div>
       <div class="row"><label>天気図画像</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.90" title="0%で非表示"></div>
+      <div class="row"><label>線番号</label><input id="lineNumberVisible" type="checkbox" checked title="3D上の線番号を表示"></div>
       <div class="row"><span class="muted" id="labelInfo">ラベル未解析</span><span></span></div>
     </div>
 
@@ -504,6 +512,7 @@ const ui = {
   basisVisible: document.getElementById('basisVisible'),
   gridVisible: document.getElementById('gridVisible'),
   imgOpacity: document.getElementById('imgOpacity'),
+  lineNumberVisible: document.getElementById('lineNumberVisible'),
   autoMode: document.getElementById('autoMode'),
   gapFactor: document.getElementById('gapFactor'),
   labelInfo: document.getElementById('labelInfo'),
@@ -628,6 +637,7 @@ let linesOffset = new THREE.Vector3(0,0,0);
 let currentLinesGroup=null;
 let solidTerrainMesh=null;
 let hoveredItem=null;
+let selectedItem=null;
 const HOVER_COLOR=new THREE.Color(0xff8a00);
 
 /* ==== render loop / resize ==== */
@@ -1073,19 +1083,72 @@ function orientPolylinePair(a,b){
   return reverse<direct?b.slice().reverse():b;
 }
 
-function buildBandBetweenContours(aItem,bItem,z){
-  let a=resampleOpenPolyline(aItem.pathPoints,72);
-  let b=resampleOpenPolyline(bItem.pathPoints,72);
+function clampContourPoint(p,bounds){
+  return new THREE.Vector3(
+    THREE.MathUtils.clamp(p.x,bounds.minX,bounds.maxX),
+    THREE.MathUtils.clamp(p.y,bounds.minY,bounds.maxY),
+    p.z||0
+  );
+}
+function buildBandBetweenContours(aItem,bItem,z,bounds){
+  let a=resampleOpenPolyline(aItem.pathPoints,88).map(p=>clampContourPoint(p,bounds));
+  let b=resampleOpenPolyline(bItem.pathPoints,88).map(p=>clampContourPoint(p,bounds));
   b=orientPolylinePair(a,b);
+  if(a.length<2||b.length<2) return new THREE.BufferGeometry();
+
+  const n=a.length,m=b.length;
+  const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
+  const maxGap=diag*.105;
+  const maxGap2=maxGap*maxGap;
+
+  // Dynamic Time Warping で、形の近い部分同士を対応づける。
+  const dp=Array.from({length:n},()=>new Float64Array(m).fill(Infinity));
+  const prev=Array.from({length:n},()=>Array(m).fill(null));
+  const cost=(i,j)=>a[i].distanceToSquared(b[j]);
+  dp[0][0]=cost(0,0);
+  for(let i=0;i<n;i++){
+    for(let j=0;j<m;j++){
+      if(i===0&&j===0) continue;
+      let best=Infinity,pi=-1,pj=-1;
+      if(i>0&&dp[i-1][j]<best){best=dp[i-1][j];pi=i-1;pj=j;}
+      if(j>0&&dp[i][j-1]<best){best=dp[i][j-1];pi=i;pj=j-1;}
+      if(i>0&&j>0&&dp[i-1][j-1]<best){best=dp[i-1][j-1];pi=i-1;pj=j-1;}
+      dp[i][j]=best+cost(i,j);
+      prev[i][j]=[pi,pj];
+    }
+  }
+
+  const path=[];
+  let i=n-1,j=m-1;
+  while(i>=0&&j>=0){
+    path.push([i,j]);
+    const p=prev[i][j];
+    if(!p) break;
+    i=p[0];j=p[1];
+  }
+  path.reverse();
+
   const pos=[];
   const tri=(p,q,r)=>pos.push(p.x,p.y,z,q.x,q.y,z,r.x,r.y,z);
-  for(let i=0;i<a.length-1;i++){
-    const a0=a[i],a1=a[i+1],b0=b[i],b1=b[i+1];
-    tri(a0,b0,b1);tri(a0,b1,a1);
+  const validPair=(ia,jb)=>a[ia].distanceToSquared(b[jb])<=maxGap2;
+
+  for(let k=1;k<path.length;k++){
+    const [i0,j0]=path[k-1],[i1,j1]=path[k];
+    if(!validPair(i0,j0)||!validPair(i1,j1)) continue;
+
+    if(i1!==i0&&j1!==j0){
+      tri(a[i0],b[j0],b[j1]);
+      tri(a[i0],b[j1],a[i1]);
+    }else if(i1!==i0){
+      tri(a[i0],b[j0],a[i1]);
+    }else if(j1!==j0){
+      tri(a[i0],b[j0],b[j1]);
+    }
   }
+
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
-  g.computeVertexNormals();
+  if(pos.length>=9) g.computeVertexNormals();
   return g;
 }
 
@@ -1653,11 +1716,11 @@ function openContourAdjacency(openItems,bounds){
       if(a===b) continue;
       const rb=rank.get(b.height)??0;
       const rankDiff=Math.abs(rb-ra);
-      if(rankDiff>4&&levels.length>4) continue;
+      if(rankDiff>2&&levels.length>3) continue;
 
       const dist=symmetricPolylineDistance(a,b);
       const score=dist+diag*.012*rankDiff;
-      if(score>diag*.24) continue;
+      if(score>diag*.14) continue;
 
       if(!bestAny||score<bestAny.score) bestAny={b,score};
       if(b.height<a.height-1e-6&&(!bestLower||score<bestLower.score)) bestLower={b,score};
@@ -1747,7 +1810,7 @@ function buildExactContourTerrain(){
     // 2本のパイプ間の水平な段面。
     addTerrainMesh(
       group,
-      buildBandBetweenContours(a,b,zLow),
+      buildBandBetweenContours(a,b,zLow,bounds),
       heightColorForValue(low.height,maxH),
       0
     );
@@ -1760,22 +1823,6 @@ function buildExactContourTerrain(){
         heightColorForItem(high),
         Math.min(zLow,zHigh),
         Math.abs(zHigh-zLow)
-      );
-    }
-  }
-
-  // 隣接線を持たない最外側の開放等圧線は、天気図外枠まで面を補う。
-  for(const it of open){
-    if((degree.get(it)||0)>0) continue;
-    const z=it.height*HEIGHT_SCALE;
-    addOpenFrameCap(group,it,bounds,heightColorForItem(it),z);
-    if(Math.abs(z-minHeight)>.01){
-      addTerrainMesh(
-        group,
-        buildCurtainGeometry(it.pathPoints,false),
-        heightColorForItem(it),
-        Math.min(z,minHeight),
-        Math.abs(z-minHeight)
       );
     }
   }
