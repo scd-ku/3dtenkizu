@@ -143,6 +143,15 @@
     box-shadow:0 4px 14px #0000000a
   }
   .card .t{display:flex;gap:.6rem;align-items:center;margin-bottom:.35rem}
+  .heightControl{
+    display:grid;grid-template-columns:minmax(120px,1fr) 92px;
+    gap:.55rem;align-items:center;min-width:0
+  }
+  .heightControl input[type=range]{width:100%;min-width:110px}
+  .heightControl input[type=number]{
+    width:92px;box-sizing:border-box;padding:.38rem .45rem;
+    border:1px solid var(--border);border-radius:.55rem;font-size:13px
+  }
   .chip{
     display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--border);
     background:var(--chip); padding:.25rem .55rem;border-radius:999px;font-size:12px;font-weight:700;color:#334155
@@ -2469,6 +2478,10 @@ function setSelectedItem(it,{scroll=true}={}){
 
   selectedItem=it||null;
 
+  if(!selectedItem && hoveredItem?.hoverMesh){
+    hoveredItem.hoverMesh.visible=true;
+  }
+
   if(selectedItem?.ui?.card){
     selectedItem.ui.card.classList.add('selected');
     if(scroll){
@@ -2566,26 +2579,39 @@ function buildList(orderByPressure=false){
 
     const row1=document.createElement('div'); row1.className='row';
     const lab=document.createElement('label'); lab.textContent='高さ（Z）';
+
+    const heightControl=document.createElement('div');
+    heightControl.className='heightControl';
+
     const slider=document.createElement('input');
     slider.type='range';slider.min=-2000;slider.max=2000;slider.step=.1;slider.value=it.height;
     slider.addEventListener('click',e=>e.stopPropagation());
-    slider.oninput=()=>{
-      it.height=parseFloat(slider.value);
-      if(it.ui?.num) it.ui.num.value=it.height.toFixed(2);
+
+    const num=document.createElement('input');
+    num.type='number';num.step=.1;num.value=Number(it.height).toFixed(2);
+    num.title='高さ（Z）';
+
+    const syncHeight=(v,source)=>{
+      const value=Number(v);
+      if(!Number.isFinite(value)) return;
+      it.height=value;
+      if(source!=='slider') slider.value=String(value);
+      if(source!=='number') num.value=value.toFixed(2);
       updateHeightsAndColors();
     };
-    row1.append(lab,slider); card.appendChild(row1);
 
-    const row2=document.createElement('div'); row2.className='row';
-    const hint=document.createElement('span'); hint.className='small'; hint.textContent='数字でも調整できるよ';
-    const num=document.createElement('input');
-    num.type='number';num.className='small';num.step=.1;num.style.width='110px';num.value=it.height.toFixed(2);
+    slider.addEventListener('input',()=>syncHeight(slider.value,'slider'));
+    slider.addEventListener('change',()=>{ num.value=Number(it.height).toFixed(2); });
     num.addEventListener('click',e=>e.stopPropagation());
-    num.onchange=()=>{
-      const v=parseFloat(num.value)||0;
-      it.height=v;slider.value=v;updateHeightsAndColors();
-    };
-    row2.append(hint,num); card.appendChild(row2);
+    num.addEventListener('input',()=>syncHeight(num.value,'number'));
+    num.addEventListener('change',()=>{
+      num.value=Number(it.height).toFixed(2);
+      slider.value=String(it.height);
+    });
+
+    heightControl.append(slider,num);
+    row1.append(lab,heightControl);
+    card.appendChild(row1);
 
     it.listIndex=i;
     it.ui={slider,num,vis,card};
@@ -2663,6 +2689,9 @@ ui.canvas.addEventListener('pointerdown',(e)=>{
     updateHudByClientXY(e.clientX,e.clientY,draggingItem.height,'高さ');
     ui.canvas.setPointerCapture(e.pointerId);
     e.preventDefault();
+  }else{
+    setSelectedItem(null,{scroll:false});
+    setHoveredItem(null,e.clientX,e.clientY);
   }
 });
 ui.canvas.addEventListener('pointermove',(e)=>{
