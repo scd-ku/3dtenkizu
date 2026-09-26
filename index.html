@@ -2429,6 +2429,25 @@ function isGreenishPaint(value){
     return false;
   }
 }
+function elementWorldCenter(el,svg){
+  const pts=numericPointsFromElement(el);
+  if(!pts.length) return null;
+  const tm=cumulativeElementTransform(el,svg);
+  let sx=0,sy=0,n=0;
+  for(const p of pts){
+    const q=transformPoint2D(p,tm);
+    if(!Number.isFinite(q.x)||!Number.isFinite(q.y)) continue;
+    sx+=q.x;sy+=q.y;n++;
+  }
+  return n?{x:sx/n,y:-sy/n}:null;
+}
+function elementInsideWeatherBounds(el,svg,bounds){
+  const p=elementWorldCenter(el,svg);
+  if(!p) return true;
+  const pad=Math.max(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY)*.015;
+  return p.x>=bounds.minX-pad&&p.x<=bounds.maxX+pad&&
+         p.y>=bounds.minY-pad&&p.y<=bounds.maxY+pad;
+}
 function featureLineGroupFromElements(svg,elements){
   const group=new THREE.Group();
   if(!elements.length) return group;
@@ -2464,7 +2483,7 @@ function featureLineGroupFromElements(svg,elements){
         const pts=pts2.map(pt=>new THREE.Vector3(+pt.x,-pt.y,0));
         const geom=new THREE.BufferGeometry().setFromPoints(pts);
         const mat=new THREE.LineBasicMaterial({
-          color:0x111111,transparent:true,opacity:.96,depthTest:true,depthWrite:false
+          color:0x080808,transparent:true,opacity:1,depthTest:true,depthWrite:false
         });
         const line=new THREE.Line(geom,mat);
         line.renderOrder=30;
@@ -2528,18 +2547,49 @@ function rebuildWeatherFeatureOverlays(rawSvgText){
     if(!svg) return;
     const bounds=detectWeatherMapInnerBounds(rawSvgText,lastSvgDims);
 
-    const geometryEls=[...svg.querySelectorAll('path,polyline,polygon,line')];
+    // 気象庁SVG仕様では g#map > g.map が海岸線。
+    // 色から推定せず、構造を直接使う。
+    let landEls=[
+      ...svg.querySelectorAll('g#map g.map polyline, g#map g.map path')
+    ].filter(el=>elementInsideWeatherBounds(el,svg,bounds));
 
-    const landEls=geometryEls.filter(el=>{
-      const tokens=svgAncestorTokens(el,svg);
-      if(/contour|front|warm|cold|occl|stnfront|trough/i.test(tokens)) return false;
-      if(/land|coast|shore/i.test(tokens)) return true;
-      return isGreenishPaint(svgStyleValue(el,'fill',svg));
-    });
+    // 旧形式・変形SVGへのフォールバック。
+    if(!landEls.length){
+      const geometryEls=[...svg.querySelectorAll('path,polyline,polygon,line')];
+      landEls=geometryEls.filter(el=>{
+        const tokens=svgAncestorTokens(el,svg);
+        return /(?:^|\s)(?:map|land|coast|shore)(?:\s|$)/i.test(tokens) &&
+          !/latlon/i.test(tokens) &&
+          elementInsideWeatherBounds(el,svg,bounds);
+      });
+    }
 
-    const frontEls=geometryEls.filter(el=>{
+    // 気象庁仕様の前線クラスを直接抽出。
+    const frontEls=[
+      ...svg.querySelectorAll(
+        'g#weatherChart g.warmFront path, g#weatherChart g.warmFront polyline,'+
+        'g#weatherChart g.coldFront path, g#weatherChart g.coldFront polyline,'+
+        'g#weatherChart g.occFront path, g#weatherChart g.occFront polyline,'+
+        'g#weatherChart g.stnFront path, g#weatherChart g.stnFront polyline'
+      )
+    ].filter(el=>elementInsideWeatherBounds(el,svg,bounds));
+
+    // 気象庁SVGでは文字や数値も path / polyline で描かれる。
+    // 等圧線本体と前線を除き、等圧線ラベル・高低気圧等の注記を複製。
+    const weatherGeometry=[
+      ...svg.querySelectorAll('g#weatherChart path, g#weatherChart polyline')
+    ];
+    const annotationEls=weatherGeometry.filter(el=>{
+      if(!elementInsideWeatherBounds(el,svg,bounds)) return false;
       const tokens=svgAncestorTokens(el,svg);
-      return /(warmfront|coldfront|occfront|occluded|stnfront|stationaryfront|front|trough)/i.test(tokens);
+      if(/warmFront|coldFront|occFront|stnFront/i.test(tokens)) return false;
+
+      const contour=el.closest('g.contour');
+      if(contour){
+        if(classifyIsobarElement(el,contour,lastSvgDims.w,lastSvgDims.h)) return false;
+        return true;
+      }
+      return /(?:high|low|llow|td|typhoon|newLow)/i.test(tokens);
     });
 
     const landLines=featureLineGroupFromElements(svg,landEls);
@@ -2548,8 +2598,12 @@ function rebuildWeatherFeatureOverlays(rawSvgText){
     const frontLines=featureLineGroupFromElements(svg,frontEls);
     while(frontLines.children.length) frontOverlayGroup.add(frontLines.children[0]);
 
+    const annotationLines=featureLineGroupFromElements(svg,annotationEls);
+    while(annotationLines.children.length) mapTextOverlayGroup.add(annotationLines.children[0]);
+
+    // 本物のtext要素を持つSVGにも対応。
     if(rendererMode==='webgl'){
-      const textNodes=[...svg.querySelectorAll('g#weatherChart text, text')];
+      const textNodes=[...svg.querySelectorAll('g#weatherChart text')];
       for(const t of textNodes){
         const txt=(t.textContent||'').replace(/\s+/g,' ').trim();
         if(!txt||txt.length>18) continue;
@@ -2580,9 +2634,9 @@ function rebuildWeatherFeatureOverlays(rawSvgText){
     updateWeatherOverlayVisibility();
 
     console.info('weather overlays:',
-      'land',landOverlayGroup.children.length,
-      'text',mapTextOverlayGroup.children.length,
-      'front',frontOverlayGroup.children.length
+      'land source',landEls.length,'rendered',landOverlayGroup.children.length,
+      'annotation source',annotationEls.length,'rendered',mapTextOverlayGroup.children.length,
+      'front source',frontEls.length,'rendered',frontOverlayGroup.children.length
     );
   }catch(err){
     console.warn('weather overlay extraction failed',err);
