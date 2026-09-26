@@ -345,12 +345,13 @@
   }
   .viewCubeScene{
     width:62px;height:62px;perspective:260px;pointer-events:auto;
-    transform:translateY(10px)
+    transform:translateY(10px);cursor:grab;touch-action:none
   }
+  .viewCubeScene.dragging{cursor:grabbing}
   .viewCube{
     position:relative;width:62px;height:62px;transform-style:preserve-3d;
     transform:rotateX(-24deg) rotateY(34deg);
-    transition:transform .18s ease
+    transition:none
   }
   .viewCubeFace{
     position:absolute;inset:0;border:1px solid #94a3b8;background:#ffffffdd;color:#64748b;
@@ -369,6 +370,25 @@
   .viewCubeFace[data-view="left"]{transform:rotateY(-90deg) translateZ(31px)}
   .viewCubeFace[data-view="top"]{transform:rotateX(90deg) translateZ(31px)}
   .viewCubeFace[data-view="bottom"]{transform:rotateX(-90deg) translateZ(31px)}
+  .viewCubeCorner{
+    position:absolute;left:50%;top:50%;width:13px;height:13px;
+    margin:-6.5px 0 0 -6.5px;padding:0;border-radius:50%;
+    border:2px solid #4f91c4;background:#fff;color:transparent;
+    cursor:pointer;pointer-events:auto;z-index:20;
+    box-shadow:0 1px 4px #0f4f7d44;
+    backface-visibility:visible
+  }
+  .viewCubeCorner:hover,.viewCubeCorner:focus-visible{
+    background:#2563a8;border-color:#fff;outline:2px solid #60a5fa;outline-offset:1px
+  }
+  .viewCubeCorner[data-dir="1,-1,1"]{transform:translate3d(31px,-31px,31px)}
+  .viewCubeCorner[data-dir="-1,-1,1"]{transform:translate3d(-31px,-31px,31px)}
+  .viewCubeCorner[data-dir="1,1,1"]{transform:translate3d(31px,31px,31px)}
+  .viewCubeCorner[data-dir="-1,1,1"]{transform:translate3d(-31px,31px,31px)}
+  .viewCubeCorner[data-dir="1,-1,-1"]{transform:translate3d(31px,-31px,-31px)}
+  .viewCubeCorner[data-dir="-1,-1,-1"]{transform:translate3d(-31px,-31px,-31px)}
+  .viewCubeCorner[data-dir="1,1,-1"]{transform:translate3d(31px,31px,-31px)}
+  .viewCubeCorner[data-dir="-1,1,-1"]{transform:translate3d(-31px,31px,-31px)}
   .viewCubeHome{
     position:absolute;left:3px;bottom:0;width:28px;height:28px;border-radius:50%;
     border:1px solid #cbd5e1;background:#ffffffdd;color:#64748b;
@@ -483,7 +503,7 @@
     <div id="dragHud"></div>
     <div id="jmaStatus"></div>
     <div class="viewCubeWrap" aria-label="視点キューブ">
-      <div class="viewCubeScene">
+      <div class="viewCubeScene" id="viewCubeScene" title="ドラッグして視点を回転">
         <div class="viewCube" id="viewCube">
           <button class="viewCubeFace" data-view="front" type="button" title="正面">前</button>
           <button class="viewCubeFace" data-view="back" type="button" title="背面">後</button>
@@ -491,6 +511,14 @@
           <button class="viewCubeFace" data-view="left" type="button" title="左側面">左</button>
           <button class="viewCubeFace" data-view="top" type="button" title="真上">上</button>
           <button class="viewCubeFace" data-view="bottom" type="button" title="真下">下</button>
+          <button class="viewCubeCorner" data-dir="1,-1,1" type="button" title="右・前・上の斜め視点" aria-label="右・前・上の斜め視点"></button>
+          <button class="viewCubeCorner" data-dir="-1,-1,1" type="button" title="左・前・上の斜め視点" aria-label="左・前・上の斜め視点"></button>
+          <button class="viewCubeCorner" data-dir="1,1,1" type="button" title="右・後・上の斜め視点" aria-label="右・後・上の斜め視点"></button>
+          <button class="viewCubeCorner" data-dir="-1,1,1" type="button" title="左・後・上の斜め視点" aria-label="左・後・上の斜め視点"></button>
+          <button class="viewCubeCorner" data-dir="1,-1,-1" type="button" title="右・前・下の斜め視点" aria-label="右・前・下の斜め視点"></button>
+          <button class="viewCubeCorner" data-dir="-1,-1,-1" type="button" title="左・前・下の斜め視点" aria-label="左・前・下の斜め視点"></button>
+          <button class="viewCubeCorner" data-dir="1,1,-1" type="button" title="右・後・下の斜め視点" aria-label="右・後・下の斜め視点"></button>
+          <button class="viewCubeCorner" data-dir="-1,1,-1" type="button" title="左・後・下の斜め視点" aria-label="左・後・下の斜め視点"></button>
         </div>
       </div>
       <button id="viewCubeHome" class="viewCubeHome" type="button" title="斜め視点" aria-label="斜め視点">
@@ -713,6 +741,7 @@ const ui = {
   qrBtn: document.getElementById('qrBtn'),
   helpBtn: document.getElementById('helpBtn'),
   viewCube: document.getElementById('viewCube'),
+  viewCubeScene: document.getElementById('viewCubeScene'),
   viewCubeHome: document.getElementById('viewCubeHome'),
   bgColor: document.getElementById('bgColor'),
   displayMode: document.getElementById('displayMode'),
