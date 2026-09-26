@@ -55,22 +55,28 @@
   /* ヘッダー：カラフルで元気に */
   header{
     grid-column:1/-1;
-    display:grid;
-    grid-template-columns:1fr;
-    gap:.55rem;
-    padding:.65rem .85rem;
+    display:block;
+    padding:.48rem .7rem;
     border-bottom:1px solid var(--border);
     background:#ffffffee;
     backdrop-filter:blur(6px);
-    position:relative
+    position:relative;
+    overflow-x:auto;
+    overflow-y:visible
   }
-  .headerMain{display:flex;align-items:center;gap:.7rem;min-width:0}
+  .headerMain{
+    display:grid;
+    grid-template-columns:auto minmax(430px,1fr) auto;
+    align-items:center;
+    gap:.6rem;
+    min-width:max-content
+  }
   header h1{
-    font-size:18px;margin:0;font-weight:800;display:flex;align-items:center;gap:.55rem;
+    font-size:17px;margin:0;font-weight:800;display:flex;align-items:center;gap:.45rem;
     color:#2563a8;white-space:nowrap
   }
   .sunLineIcon{width:24px;height:24px;flex:0 0 auto}
-  .headerActions{margin-left:auto;display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;justify-content:flex-end}
+  .headerActions{display:flex;align-items:center;gap:.35rem;flex-wrap:nowrap;justify-content:flex-end;white-space:nowrap}
   .controlGroup{display:flex;align-items:center;gap:.35rem;padding:.2rem;border:1px solid var(--border);border-radius:.7rem;background:#f8fafc}
   .controlGroup .groupLabel{font-size:11px;color:#64748b;padding-left:.35rem}
   header a{font-size:13px;color:var(--accent);text-decoration:none}
@@ -129,7 +135,13 @@
   .sectionIcon{width:18px;height:18px;flex:0 0 auto;color:#3978ad}
   .section.collapsible>h2{cursor:pointer;user-select:none;padding:.28rem .15rem;border-radius:.45rem}
   .section.collapsible>h2:hover{background:#f1f5f9}
-  .section.collapsible>h2::after{content:"▾";margin-left:auto;color:#64748b;font-size:12px;transition:transform .15s ease}
+  .section.collapsible>h2::after{
+    content:"▼";margin-left:auto;color:#2563a8;font-size:15px;font-weight:900;
+    width:28px;height:28px;display:grid;place-items:center;
+    border:1px solid #dbeafe;background:#eff6ff;border-radius:8px;
+    transition:transform .15s ease,background .15s ease
+  }
+  .section.collapsible>h2:hover::after{background:#dbeafe}
   .section.collapsible.collapsed>h2::after{transform:rotate(-90deg)}
   .section.collapsible.collapsed>:not(h2){display:none}
 
@@ -208,16 +220,17 @@
     display:inline-grid;place-items:center;font-size:14px!important;font-weight:800
   }
   #jmaDirectBar{
-    display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;
-    padding:.45rem .55rem;background:#f8fafc;border:1px solid var(--border);border-radius:.72rem
+    display:flex;align-items:center;gap:.32rem;flex-wrap:nowrap;min-width:0;
+    padding:.22rem .3rem;background:#f8fafc;border:1px solid var(--border);border-radius:.65rem;
+    white-space:nowrap
   }
   #jmaDirectBar .sourceTitle{font-size:12px;font-weight:800;color:#334155;margin-right:.15rem}
-  #jmaDirectBar .sourceHint{font-size:11px;color:#64748b;margin-right:.2rem}
+  #jmaDirectBar .sourceHint{display:none}
   #jmaDirectBar input,#jmaDirectBar select,#jmaDirectBar button{
     background:#fff;border:1px solid var(--border);color:#0f172a;
     padding:.46rem .58rem;border-radius:.58rem;font-size:13px
   }
-  #jmaDirectBar input[type=date]{width:138px}
+  #jmaDirectBar input[type=date]{width:126px}
   #jmaLoadBtn{font-weight:800;background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
   #jmaStatus{
     position:absolute;left:12px;top:12px;z-index:4;
@@ -253,14 +266,14 @@
   .helpNote{padding:.7rem .8rem;background:#f8fafc;border:1px solid var(--border);border-radius:.8rem}
   @media(max-width:1180px){
     #app{grid-template-rows:auto 1fr}
-    .headerMain{align-items:flex-start;flex-wrap:wrap}
-    .headerActions{width:100%;justify-content:flex-start}
-    #jmaDirectBar{width:auto}
+    .headerMain{grid-template-columns:auto minmax(400px,1fr) auto}
+    .controlGroup .groupLabel{display:none}
+    header button,header label,header select{padding:.4rem .52rem;font-size:12px}
+    #jmaDirectBar input,#jmaDirectBar select,#jmaDirectBar button{padding:.4rem .46rem;font-size:12px}
   }
   @media(max-width:720px){
-    header h1{font-size:16px}
-    .controlGroup .groupLabel{display:none}
-    #jmaDirectBar .sourceHint{display:none}
+    header h1{font-size:15px}
+    .sunLineIcon{width:20px;height:20px}
   }
 </style>
 </head>
@@ -313,7 +326,6 @@
         <button id="helpBtn" class="iconOnly" type="button" title="使い方">?</button>
         <button id="panelToggle" type="button" data-open="true">設定</button>
       </div>
-    </div>
 
     <div id="jmaDirectBar" aria-label="気象庁の過去天気図を直接読み込み">
       <span class="sourceTitle">気象庁天気図</span>
@@ -331,6 +343,7 @@
       <button id="jmaLoadBtn" type="button">気象庁SVGを読み込む</button>
       <button id="openSvgBtn" type="button">手元のSVGを開く</button>
       <a id="jmaArchiveLink" href="https://www.data.jma.go.jp/yoho/wxchart/quickdaily.html" target="_blank" rel="noopener noreferrer" title="気象庁の1日表示">元データ</a>
+    </div>
     </div>
   </header>
 
@@ -403,7 +416,7 @@
         <input id="solidContourVisible" type="checkbox" checked title="立体モードで等圧線を表示">
       </div>
       <div class="muted" style="margin:.15rem 0 .65rem">
-        色は高さに応じて赤→青へ変化します。色相補正で全体の色味を調整できます。<br>壁：パイプと同じ幅の壁面　／　立体：パイプ表示の等圧線形状をそのまま使い、隣り合う等圧線の間を段状の面で接続します
+        色は高さに応じて赤→青へ変化します。色相補正で全体の色味を調整できます。<br>壁：パイプと同じ幅の壁面　／　立体：天気図全体を細かな格子で解析し、最も近い等圧線の高さを各領域へ割り当てた連続する段状地形として表示します
       </div>
     </div>
 
@@ -448,7 +461,7 @@
     </ul>
 
     <h3>3. 表示モード</h3>
-    <p>設定パネルの「表示スタイル」で、等圧線を「パイプ」「壁」「立体」から選べます。「壁」はパイプと同じ幅で地面から等圧線の高さまで立ち上がります。「立体」は等圧線そのものを段差境界に使い、隣り合う等圧線の間を水平面で、等圧線位置を垂直面でつないだ建築のコンター模型のような段状地形として表示します。色は高さに応じて赤から青へ変化し、色相補正と透明度をスライダーで調整できます。</p>
+    <p>設定パネルの「表示スタイル」で、等圧線を「パイプ」「壁」「立体」から選べます。「壁」はパイプと同じ幅で地面から等圧線の高さまで立ち上がります。「立体」は天気図内を細かな格子で解析し、各位置で最も近い等圧線の高さを割り当て、水平な台地面と高さが変わる境界の垂直面を持つ建築のコンター模型のような段状地形として表示します。色は高さに応じて赤から青へ変化し、色相補正と透明度をスライダーで調整できます。</p>
 
     <h3>4. 等圧線の高さを変える</h3>
     <p>マウスを等圧線に重ねるとオレンジ色に強調され、気圧と高さが表示されます。等圧線を上下にドラッグすると高さを変更できます。Shiftキーを押しながら動かすと細かく、Altキーを押しながら動かすと大きく変更できます。右側パネルのスライダーや数値入力でも調整できます。</p>
@@ -652,7 +665,7 @@ let solidTerrainMesh=null;
 let hoveredItem=null;
 let selectedItem=null;
 let terrainGridCache=null;
-const TERRAIN_GRID_DIVISIONS=260;
+const TERRAIN_GRID_DIVISIONS=360;
 const HOVER_COLOR=new THREE.Color(0xff8a00);
 
 /* ==== render loop / resize ==== */
@@ -2645,7 +2658,7 @@ function updateLineNumberLabels(){
     const sp=it.lineLabelSprite;
     if(!sp) continue;
     const p=representativeLabelPoint(it);
-    sp.position.set(p.x,p.y,it.height*HEIGHT_SCALE+PIPE_RADIUS*.8);
+    sp.position.set(p.x,p.y,it.height*HEIGHT_SCALE+PIPE_RADIUS*2.55);
     sp.visible=enabled && (it.ui?.vis?.checked ?? true);
   }
 }
