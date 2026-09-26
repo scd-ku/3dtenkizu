@@ -651,6 +651,8 @@ let currentLinesGroup=null;
 let solidTerrainMesh=null;
 let hoveredItem=null;
 let selectedItem=null;
+let terrainGridCache=null;
+const TERRAIN_GRID_DIVISIONS=260;
 const HOVER_COLOR=new THREE.Color(0xff8a00);
 
 /* ==== render loop / resize ==== */
@@ -1777,91 +1779,255 @@ function addOpenFrameCap(group,it,bounds,color,z){
   addTerrainMesh(group,geom,color,z);
   return true;
 }
+function distance2PointToSegmentFast(px,py,ax,ay,bx,by){
+  const vx=bx-ax,vy=by-ay;
+  const wx=px-ax,wy=py-ay;
+  const vv=vx*vx+vy*vy;
+  if(vv<1e-12){
+    const dx=px-ax,dy=py-ay;
+    return dx*dx+dy*dy;
+  }
+  let t=(wx*vx+wy*vy)/vv;
+  if(t<0)t=0; else if(t>1)t=1;
+  const qx=ax+t*vx,qy=ay+t*vy;
+  const dx=px-qx,dy=py-qy;
+  return dx*dx+dy*dy;
+}
+function distance2PointToBox(px,py,b){
+  const dx=px<b.minX?b.minX-px:(px>b.maxX?px-b.maxX:0);
+  const dy=py<b.minY?b.minY-py:(py>b.maxY?py-b.maxY:0);
+  return dx*dx+dy*dy;
+}
+function prepareFineTerrainGrid(visibleItems,bounds){
+  const canvasW=bounds.maxX-bounds.minX;
+  const canvasH=bounds.maxY-bounds.minY;
+  const key=[
+    Math.round(canvasW),Math.round(canvasH),
+    ...visibleItems.map(it=>items.indexOf(it))
+  ].join(':');
+
+  if(terrainGridCache?.key===key) return terrainGridCache;
+
+  const maxDim=Math.max(canvasW,canvasH);
+  const nominalCell=maxDim/TERRAIN_GRID_DIVISIONS;
+  const nx=Math.max(24,Math.ceil(canvasW/nominalCell));
+  const ny=Math.max(18,Math.ceil(canvasH/nominalCell));
+  const dx=canvasW/nx;
+  const dy=canvasH/ny;
+
+  // 距離判定用の線を適度に再サンプリング。格子自体は細かくするが、
+  // 距離計算は線分への正確な距離なので形状を保てる。
+  const lineData=visibleItems.map(it=>{
+    const pts=normalizedContourPoints(it.pathPoints,42);
+    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+    const segs=[];
+    for(const p of pts){
+      minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);
+      maxX=Math.max(maxX,p.x);maxY=Math.max(maxY,p.y);
+    }
+    for(let i=0;i<pts.length-1;i++){
+      const a=pts[i],b=pts[i+1];
+      segs.push([a.x,a.y,b.x,b.y]);
+    }
+    if(it.isClosed&&pts.length>2){
+      const a=pts[pts.length-1],b=pts[0];
+      segs.push([a.x,a.y,b.x,b.y]);
+    }
+    return {it,segs,bbox:{minX,minY,maxX,maxY}};
+  });
+
+  const owners=new Uint16Array(nx*ny);
+
+  for(let iy=0;iy<ny;iy++){
+    const y=bounds.maxY-(iy+.5)*dy;
+    for(let ix=0;ix<nx;ix++){
+      const x=bounds.minX+(ix+.5)*dx;
+      let bestIndex=0,bestD2=Infinity;
+
+      for(let li=0;li<lineData.length;li++){
+        const ld=lineData[li];
+        if(distance2PointToBox(x,y,ld.bbox)>=bestD2) continue;
+
+        for(const seg of ld.segs){
+          const d2=distance2PointToSegmentFast(x,y,seg[0],seg[1],seg[2],seg[3]);
+          if(d2<bestD2){
+            bestD2=d2;
+            bestIndex=li;
+          }
+        }
+      }
+      owners[iy*nx+ix]=bestIndex;
+    }
+  }
+
+  terrainGridCache={
+    key,nx,ny,dx,dy,bounds:{...bounds},owners,visibleItems:[...visibleItems]
+  };
+  console.info('fine terrain grid:',nx,'x',ny,'cells',nx*ny);
+  return terrainGridCache;
+}
+function makeFineTerrainMaterial(){
+  const opacity=displayOpacity();
+  const opts={
+    vertexColors:true,
+    transparent:opacity<.999,
+    opacity,
+    side:THREE.DoubleSide,
+    depthWrite:opacity>.65,
+    polygonOffset:true,
+    polygonOffsetFactor:1,
+    polygonOffsetUnits:1
+  };
+  return rendererMode==='webgl'
+    ? new THREE.MeshStandardMaterial({...opts,roughness:.82,metalness:0,flatShading:true})
+    : new THREE.MeshBasicMaterial(opts);
+}
+function buildFineVoxelTerrainGeometry(grid,maxH){
+  const {nx,ny,dx,dy,bounds,owners,visibleItems}=grid;
+  const pos=[];
+  const col=[];
+
+  const zFor=(owner)=>visibleItems[owner].height*HEIGHT_SCALE;
+  const colorFor=(owner)=>heightColorForValue(visibleItems[owner].height,maxH);
+  const baseZ=Math.min(0,...visibleItems.map(it=>it.height*HEIGHT_SCALE));
+
+  const pushVertex=(x,y,z,color)=>{
+    pos.push(x,y,z);
+    col.push(color.r,color.g,color.b);
+  };
+  const tri=(a,b,c,color)=>{
+    pushVertex(a[0],a[1],a[2],color);
+    pushVertex(b[0],b[1],b[2],color);
+    pushVertex(c[0],c[1],c[2],color);
+  };
+  const quad=(a,b,c,d,color)=>{
+    tri(a,b,c,color); tri(a,c,d,color);
+  };
+
+  // 水平な台地面。各セルは最も近い等圧線の高さを持つ。
+  for(let iy=0;iy<ny;iy++){
+    const yTop=bounds.maxY-iy*dy;
+    const yBottom=yTop-dy;
+    for(let ix=0;ix<nx;ix++){
+      const idx=iy*nx+ix;
+      const owner=owners[idx];
+      const z=zFor(owner);
+      const color=colorFor(owner);
+      const xLeft=bounds.minX+ix*dx;
+      const xRight=xLeft+dx;
+
+      quad(
+        [xLeft,yTop,z],
+        [xRight,yTop,z],
+        [xRight,yBottom,z],
+        [xLeft,yBottom,z],
+        color
+      );
+
+      // 右隣との高さ差を垂直面にする。
+      if(ix<nx-1){
+        const ownerR=owners[idx+1];
+        const zR=zFor(ownerR);
+        if(Math.abs(zR-z)>.01){
+          const highOwner=zR>z?ownerR:owner;
+          const wallColor=colorFor(highOwner);
+          quad(
+            [xRight,yTop,Math.min(z,zR)],
+            [xRight,yTop,Math.max(z,zR)],
+            [xRight,yBottom,Math.max(z,zR)],
+            [xRight,yBottom,Math.min(z,zR)],
+            wallColor
+          );
+        }
+      }
+
+      // 下隣との高さ差を垂直面にする。
+      if(iy<ny-1){
+        const ownerD=owners[idx+nx];
+        const zD=zFor(ownerD);
+        if(Math.abs(zD-z)>.01){
+          const highOwner=zD>z?ownerD:owner;
+          const wallColor=colorFor(highOwner);
+          quad(
+            [xLeft,yBottom,Math.min(z,zD)],
+            [xRight,yBottom,Math.min(z,zD)],
+            [xRight,yBottom,Math.max(z,zD)],
+            [xLeft,yBottom,Math.max(z,zD)],
+            wallColor
+          );
+        }
+      }
+
+      // 天気図外郭の側面も基準面まで閉じる。
+      if(ix===0&&Math.abs(z-baseZ)>.01){
+        quad(
+          [xLeft,yBottom,baseZ],[xLeft,yTop,baseZ],
+          [xLeft,yTop,z],[xLeft,yBottom,z],color
+        );
+      }
+      if(ix===nx-1&&Math.abs(z-baseZ)>.01){
+        quad(
+          [xRight,yTop,baseZ],[xRight,yBottom,baseZ],
+          [xRight,yBottom,z],[xRight,yTop,z],color
+        );
+      }
+      if(iy===0&&Math.abs(z-baseZ)>.01){
+        quad(
+          [xLeft,yTop,baseZ],[xRight,yTop,baseZ],
+          [xRight,yTop,z],[xLeft,yTop,z],color
+        );
+      }
+      if(iy===ny-1&&Math.abs(z-baseZ)>.01){
+        quad(
+          [xRight,yBottom,baseZ],[xLeft,yBottom,baseZ],
+          [xLeft,yBottom,z],[xRight,yBottom,z],color
+        );
+      }
+    }
+  }
+
+  // 建築模型として下面も閉じる。
+  const baseColor=heightColorForValue(
+    Math.min(...visibleItems.map(it=>it.height)),
+    maxH
+  );
+  quad(
+    [bounds.minX,bounds.minY,baseZ],
+    [bounds.maxX,bounds.minY,baseZ],
+    [bounds.maxX,bounds.maxY,baseZ],
+    [bounds.minX,bounds.maxY,baseZ],
+    baseColor
+  );
+
+  const geom=new THREE.BufferGeometry();
+  geom.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  geom.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+  if(pos.length>=9) geom.computeVertexNormals();
+  return geom;
+}
 function buildExactContourTerrain(){
   const group=new THREE.Group();
   const visibleItems=items.filter(it=>it.ui?.vis?.checked??true);
   if(!visibleItems.length) return group;
 
-  computeContourHierarchy();
-
   const canvasW=lastSvgDims?.w||1000;
   const canvasH=lastSvgDims?.h||1000;
   const bounds={minX:0,minY:-canvasH,maxX:canvasW,maxY:0};
-  const minHeight=Math.min(0,...visibleItems.map(it=>it.height*HEIGHT_SCALE));
   const maxH=currentMaxHeightStrict();
 
-  // 天気図範囲だけを最低面にする。
-  const base=buildShapeGeometryFromPolygon([
-    new THREE.Vector3(bounds.minX,bounds.minY,0),
-    new THREE.Vector3(bounds.maxX,bounds.minY,0),
-    new THREE.Vector3(bounds.maxX,bounds.maxY,0),
-    new THREE.Vector3(bounds.minX,bounds.maxY,0)
-  ]);
-  addTerrainMesh(group,base,heightColorForValue(minHeight/HEIGHT_SCALE,maxH),minHeight);
-
-  const visibleSet=new Set(visibleItems);
-
-  // 閉じた等圧線は、実際のパイプ形状の親子関係をそのままコンター段にする。
-  for(const it of visibleItems.filter(x=>x.isClosed)){
-    const z=it.height*HEIGHT_SCALE;
-    const top=buildTerraceTopGeometry(it);
-    addTerrainMesh(group,top,heightColorForItem(it),z);
-
-    const parent=(it.parentContour&&visibleSet.has(it.parentContour))?it.parentContour:null;
-    const parentZ=parent?parent.height*HEIGHT_SCALE:minHeight;
-    const dz=z-parentZ;
-    if(Math.abs(dz)>.01){
-      addTerrainMesh(
-        group,
-        buildCurtainGeometry(it.pathPoints,true),
-        heightColorForItem(it),
-        Math.min(z,parentZ),
-        Math.abs(dz)
-      );
-    }
-  }
-
-  // 開いた等圧線は、空間的に隣り合うパイプ同士を直接ストリップ面で接続する。
-  const open=visibleItems.filter(x=>!x.isClosed);
-  const pairs=openContourAdjacency(open,bounds);
-  const degree=new Map(open.map(it=>[it,0]));
-
-  for(const pair of pairs){
-    const a=pair.a,b=pair.b;
-    degree.set(a,(degree.get(a)||0)+1);
-    degree.set(b,(degree.get(b)||0)+1);
-
-    const low=a.height<=b.height?a:b;
-    const high=low===a?b:a;
-    const zLow=low.height*HEIGHT_SCALE;
-    const zHigh=high.height*HEIGHT_SCALE;
-
-    // 2本のパイプが実際に並走する区間だけ、低い側の高さで水平面を張る。
-    const bandGeom=buildBandBetweenContours(low,high,zLow,bounds);
-    addTerrainMesh(
-      group,
-      bandGeom,
-      heightColorForValue(low.height,maxH),
-      0
-    );
-
-    // 次の高さへの段差は、高い側のパイプそのものの位置。
-    if(Math.abs(zHigh-zLow)>.01){
-      addTerrainMesh(
-        group,
-        buildCurtainGeometry(high.pathPoints,false),
-        heightColorForItem(high),
-        Math.min(zLow,zHigh),
-        Math.abs(zHigh-zLow)
-      );
-    }
+  const grid=prepareFineTerrainGrid(visibleItems,bounds);
+  const geom=buildFineVoxelTerrainGeometry(grid,maxH);
+  if(geom.getAttribute('position')?.count>=3){
+    const mesh=new THREE.Mesh(geom,makeFineTerrainMaterial());
+    mesh.renderOrder=-2;
+    group.add(mesh);
   }
 
   console.info(
-    'solid terrain direct strips:',
-    'closed',visibleItems.filter(x=>x.isClosed).length,
-    'open',open.length,
-    'pairs',pairs.length
+    'solid terrain fine voxel:',
+    grid.nx+'x'+grid.ny,
+    'cells',grid.nx*grid.ny,
+    'contours',visibleItems.length
   );
   return group;
 }
@@ -2056,7 +2222,7 @@ function stitchSubpathSegments(segments){
 }
 
 async function loadSVGFromString(svgText){
-  selectedItem=null; hoveredItem=null;
+  selectedItem=null; hoveredItem=null; terrainGridCache=null;
   rootLines.clear(); items=[]; ui.list.innerHTML='';
 
   const metaDoc=new DOMParser().parseFromString(svgText,'image/svg+xml');
@@ -2576,6 +2742,7 @@ function buildList(orderByPressure=false){
       if(it.pickPipeMesh) it.pickPipeMesh.visible=vis.checked;
       if(it.hoverMesh&&!vis.checked) it.hoverMesh.visible=false;
       if(it.lineLabelSprite) it.lineLabelSprite.visible=vis.checked&&ui.lineNumberVisible.checked;
+      terrainGridCache=null;
       rebuildSolidTerrain();
     };
 
@@ -3045,7 +3212,7 @@ function parsePointsAttr2D(str){
   return out;
 }
 async function loadProjectSVG(svgText){
-  selectedItem=null; hoveredItem=null;
+  selectedItem=null; hoveredItem=null; terrainGridCache=null;
   const doc = new DOMParser().parseFromString(svgText,"image/svg+xml");
   const svg = doc.querySelector("svg");
   if(!svg){ console.warn('SVGルートが見つかりません'); return; }
