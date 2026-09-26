@@ -1103,60 +1103,62 @@ function clampContourPoint(p,bounds){
     p.z||0
   );
 }
+function closestPointOnPolyline(p,line){
+  let best=null,bestD2=Infinity,bestS=0;
+  const segLens=[];
+  let total=0;
+  for(let i=1;i<line.length;i++){
+    const len=line[i].distanceTo(line[i-1]);
+    segLens.push(len); total+=len;
+  }
+  let accum=0;
+  for(let i=0;i<line.length-1;i++){
+    const a=line[i],b=line[i+1];
+    const ab=b.clone().sub(a);
+    const len2=ab.lengthSq();
+    let t=0;
+    if(len2>1e-12) t=THREE.MathUtils.clamp(p.clone().sub(a).dot(ab)/len2,0,1);
+    const q=a.clone().add(ab.multiplyScalar(t));
+    const d2=q.distanceToSquared(p);
+    if(d2<bestD2){
+      bestD2=d2;
+      best=q;
+      bestS=total>1e-9?(accum+(segLens[i]||0)*t)/total:0;
+    }
+    accum+=segLens[i]||0;
+  }
+  return {point:best||line[0].clone(),d2:bestD2,s:bestS};
+}
 function buildBandBetweenContours(aItem,bItem,z,bounds){
-  let a=resampleOpenPolyline(aItem.pathPoints,88).map(p=>clampContourPoint(p,bounds));
-  let b=resampleOpenPolyline(bItem.pathPoints,88).map(p=>clampContourPoint(p,bounds));
+  // 実際のパイプ形状から局所的に面を張る。端点を無理に対応させない。
+  let a=resampleOpenPolyline(aItem.pathPoints,120).map(p=>clampContourPoint(p,bounds));
+  let b=resampleOpenPolyline(bItem.pathPoints,150).map(p=>clampContourPoint(p,bounds));
   b=orientPolylinePair(a,b);
   if(a.length<2||b.length<2) return new THREE.BufferGeometry();
 
-  const n=a.length,m=b.length;
   const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
-  const maxGap=diag*.105;
+  const maxGap=diag*.085;
   const maxGap2=maxGap*maxGap;
-
-  // Dynamic Time Warping で、形の近い部分同士を対応づける。
-  const dp=Array.from({length:n},()=>new Float64Array(m).fill(Infinity));
-  const prev=Array.from({length:n},()=>Array(m).fill(null));
-  const cost=(i,j)=>a[i].distanceToSquared(b[j]);
-  dp[0][0]=cost(0,0);
-  for(let i=0;i<n;i++){
-    for(let j=0;j<m;j++){
-      if(i===0&&j===0) continue;
-      let best=Infinity,pi=-1,pj=-1;
-      if(i>0&&dp[i-1][j]<best){best=dp[i-1][j];pi=i-1;pj=j;}
-      if(j>0&&dp[i][j-1]<best){best=dp[i][j-1];pi=i;pj=j-1;}
-      if(i>0&&j>0&&dp[i-1][j-1]<best){best=dp[i-1][j-1];pi=i-1;pj=j-1;}
-      dp[i][j]=best+cost(i,j);
-      prev[i][j]=[pi,pj];
-    }
-  }
-
-  const path=[];
-  let i=n-1,j=m-1;
-  while(i>=0&&j>=0){
-    path.push([i,j]);
-    const p=prev[i][j];
-    if(!p) break;
-    i=p[0];j=p[1];
-  }
-  path.reverse();
+  const matches=a.map(p=>closestPointOnPolyline(p,b));
 
   const pos=[];
   const tri=(p,q,r)=>pos.push(p.x,p.y,z,q.x,q.y,z,r.x,r.y,z);
-  const validPair=(ia,jb)=>a[ia].distanceToSquared(b[jb])<=maxGap2;
 
-  for(let k=1;k<path.length;k++){
-    const [i0,j0]=path[k-1],[i1,j1]=path[k];
-    if(!validPair(i0,j0)||!validPair(i1,j1)) continue;
+  for(let i=0;i<a.length-1;i++){
+    const m0=matches[i],m1=matches[i+1];
+    if(!m0||!m1||m0.d2>maxGap2||m1.d2>maxGap2) continue;
 
-    if(i1!==i0&&j1!==j0){
-      tri(a[i0],b[j0],b[j1]);
-      tri(a[i0],b[j1],a[i1]);
-    }else if(i1!==i0){
-      tri(a[i0],b[j0],a[i1]);
-    }else if(j1!==j0){
-      tri(a[i0],b[j0],b[j1]);
-    }
+    // 相手側の対応点が逆行したり大きくジャンプする箇所は接続しない。
+    const ds=m1.s-m0.s;
+    if(ds<-0.012||ds>0.12) continue;
+
+    const a0=a[i],a1=a[i+1],b0=m0.point,b1=m1.point;
+    const edgeA=a0.distanceTo(a1);
+    const edgeB=b0.distanceTo(b1);
+    if(edgeA>diag*.05||edgeB>diag*.08) continue;
+
+    tri(a0,b0,b1);
+    tri(a0,b1,a1);
   }
 
   const g=new THREE.BufferGeometry();
@@ -1709,8 +1711,6 @@ function symmetricPolylineDistance(a,b){
 }
 function openContourAdjacency(openItems,bounds){
   const diag=Math.hypot(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
-  const levels=[...new Set(openItems.map(it=>it.height))].sort((a,b)=>a-b);
-  const rank=new Map(levels.map((h,i)=>[h,i]));
   const pairs=new Map();
 
   const addPair=(a,b,score)=>{
@@ -1722,40 +1722,47 @@ function openContourAdjacency(openItems,bounds){
   };
 
   for(const a of openItems){
-    const ra=rank.get(a.height)??0;
-    let bestLower=null,bestHigher=null,bestAny=null;
-
+    const candidates=[];
     for(const b of openItems){
       if(a===b) continue;
-      const rb=rank.get(b.height)??0;
-      const rankDiff=Math.abs(rb-ra);
-      if(rankDiff>2&&levels.length>3) continue;
-
-      if(isFinite(a.actualPressure)&&isFinite(b.actualPressure)){
-        const pd=Math.abs(a.actualPressure-b.actualPressure);
-        // 同じ気圧の離れた枝同士はつながず、隣接する2/4hPa差だけを候補にする。
-        if(pd<1.5||pd>4.5) continue;
-      }
 
       const dist=symmetricPolylineDistance(a,b);
-      const pressurePenalty=(isFinite(a.actualPressure)&&isFinite(b.actualPressure))
-        ? Math.abs(a.actualPressure-b.actualPressure)*diag*.003
-        : 0;
-      const score=dist+diag*.012*rankDiff+pressurePenalty;
-      if(score>diag*.14) continue;
+      if(!Number.isFinite(dist)||dist>diag*.17) continue;
 
-      if(!bestAny||score<bestAny.score) bestAny={b,score};
-      if(b.height<a.height-1e-6&&(!bestLower||score<bestLower.score)) bestLower={b,score};
-      if(b.height>a.height+1e-6&&(!bestHigher||score<bestHigher.score)) bestHigher={b,score};
+      const pa=isFinite(a.actualPressure)?a.actualPressure:null;
+      const pb=isFinite(b.actualPressure)?b.actualPressure:null;
+      const pd=(pa!=null&&pb!=null)?Math.abs(pa-pb):null;
+
+      // 同じhPaの別枝は面でつながない。2/4hPa隣接を最優先し、
+      // 推定誤差を考慮して6hPaまでは候補に残す。
+      if(pd!=null&&pd<1.0) continue;
+      if(pd!=null&&pd>6.5) continue;
+
+      const hdiff=Math.abs(a.height-b.height);
+      const pressurePenalty=pd==null?0:Math.abs(pd-3)*diag*.004;
+      const heightPenalty=hdiff<1e-6?diag*.04:0;
+      candidates.push({
+        b,dist,
+        score:dist+pressurePenalty+heightPenalty,
+        higher:b.height>a.height+1e-6,
+        lower:b.height<a.height-1e-6
+      });
     }
 
-    if(bestLower) addPair(a,bestLower.b,bestLower.score);
+    candidates.sort((x,y)=>x.score-y.score);
+    const bestHigher=candidates.find(x=>x.higher);
+    const bestLower=candidates.find(x=>x.lower);
+    const bestAny=candidates[0];
+
+    // 各等圧線に少なくとも近い上下1本ずつを割り当てる。
     if(bestHigher) addPair(a,bestHigher.b,bestHigher.score);
-    if(!bestLower&&!bestHigher&&bestAny) addPair(a,bestAny.b,bestAny.score);
+    if(bestLower) addPair(a,bestLower.b,bestLower.score);
+    if(!bestHigher&&!bestLower&&bestAny) addPair(a,bestAny.b,bestAny.score);
   }
 
   return [...pairs.values()].sort((x,y)=>x.score-y.score);
 }
+
 function addOpenFrameCap(group,it,bounds,color,z){
   const candidates=openSideCandidates(it,bounds);
   if(!candidates?.length) return false;
@@ -1829,10 +1836,11 @@ function buildExactContourTerrain(){
     const zLow=low.height*HEIGHT_SCALE;
     const zHigh=high.height*HEIGHT_SCALE;
 
-    // 2本のパイプ間の水平な段面。
+    // 2本のパイプが実際に並走する区間だけ、低い側の高さで水平面を張る。
+    const bandGeom=buildBandBetweenContours(low,high,zLow,bounds);
     addTerrainMesh(
       group,
-      buildBandBetweenContours(a,b,zLow,bounds),
+      bandGeom,
       heightColorForValue(low.height,maxH),
       0
     );
