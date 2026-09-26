@@ -708,6 +708,8 @@ const ui = {
   jmaArchiveLink: document.getElementById('jmaArchiveLink'),
   qrBtn: document.getElementById('qrBtn'),
   helpBtn: document.getElementById('helpBtn'),
+  viewCube: document.getElementById('viewCube'),
+  viewCubeHome: document.getElementById('viewCubeHome'),
   bgColor: document.getElementById('bgColor'),
   displayMode: document.getElementById('displayMode'),
   displayHue: document.getElementById('displayHue'),
@@ -821,8 +823,8 @@ camera = perspCamera; makeControls(camera);
 /* ==== lights / grid / basis ==== */
 scene.add(new THREE.AmbientLight(0xffffff,0.6));
 const dl=new THREE.DirectionalLight(0xffffff,0.95); dl.position.set(400,300,500); scene.add(dl);
-const gridXY=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridXY.rotation.x=Math.PI/2; gridXY.material.opacity=.6; gridXY.material.transparent=true; scene.add(gridXY);
-const gridZX=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridZX.material.opacity=.35; gridZX.material.transparent=true; scene.add(gridZX);
+const gridXY=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridXY.rotation.x=Math.PI/2; gridXY.material.opacity=.6; gridXY.material.transparent=true; gridXY.visible=false; scene.add(gridXY);
+const gridZX=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridZX.material.opacity=.35; gridZX.material.transparent=true; gridZX.visible=false; scene.add(gridZX);
 
 function makeThickAxis(direction,color){
   const group=new THREE.Group();
@@ -962,7 +964,14 @@ function resize(){
   else setOrthoFrustum();
 }
 addEventListener('resize',resize); resize();
-(function anim(){ requestAnimationFrame(anim); controls.update(); renderer.render(scene,camera); })();
+(function anim(){
+  requestAnimationFrame(anim);
+  controls.update();
+  for(const label of Object.values(axisLabels)){
+    if(label) label.quaternion.copy(camera.quaternion);
+  }
+  renderer.render(scene,camera);
+})();
 
 /* ==== views ==== */
 function setDefaultObliqueView(){
