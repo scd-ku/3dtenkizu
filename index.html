@@ -1718,8 +1718,17 @@ function openContourAdjacency(openItems,bounds){
       const rankDiff=Math.abs(rb-ra);
       if(rankDiff>2&&levels.length>3) continue;
 
+      if(isFinite(a.actualPressure)&&isFinite(b.actualPressure)){
+        const pd=Math.abs(a.actualPressure-b.actualPressure);
+        // 同じ気圧の離れた枝同士はつながず、隣接する2/4hPa差だけを候補にする。
+        if(pd<1.5||pd>4.5) continue;
+      }
+
       const dist=symmetricPolylineDistance(a,b);
-      const score=dist+diag*.012*rankDiff;
+      const pressurePenalty=(isFinite(a.actualPressure)&&isFinite(b.actualPressure))
+        ? Math.abs(a.actualPressure-b.actualPressure)*diag*.003
+        : 0;
+      const score=dist+diag*.012*rankDiff+pressurePenalty;
       if(score>diag*.14) continue;
 
       if(!bestAny||score<bestAny.score) bestAny={b,score};
@@ -2026,6 +2035,7 @@ function stitchSubpathSegments(segments){
 }
 
 async function loadSVGFromString(svgText){
+  selectedItem=null; hoveredItem=null;
   rootLines.clear(); items=[]; ui.list.innerHTML='';
 
   const metaDoc=new DOMParser().parseFromString(svgText,'image/svg+xml');
@@ -2362,8 +2372,7 @@ async function assignPressuresFromLabelsOrAreas(){
       const x=it.centroid.x,y=it.centroid.y;
       let best=null,bd=Infinity;
       for(const lb of labs){
-        const ly=-lb.y;
-        const d=(lb.x-x)*(lb.x-x)+(ly+y)*(ly+y);
+        const d=(lb.x-x)*(lb.x-x)+(lb.y-y)*(lb.y-y);
         if(d<bd){bd=d;best=lb;}
       }
       it.pressure=best?best.value:undefined;
@@ -2624,8 +2633,8 @@ function setHoveredItem(it,clientX,clientY){
     }
   }
   if(it && !draggingItem){
-    const p=(it.pressureSource==='気圧値ラベル'&&isFinite(it.pressure))
-      ? String(it.pressure)+' hPa'
+    const p=isFinite(it.actualPressure)
+      ? Math.round(it.actualPressure)+' hPa ('+pressureTypeLabel(it)+')'
       : (it.pressureSource||('線 '+String(it.listIndex||'').padStart(2,'0')));
     updateHudByClientXY(clientX,clientY,it.height,`${p} / 高さ`);
     ui.dragHud.style.display='block';
@@ -2988,6 +2997,7 @@ function parsePointsAttr2D(str){
   return out;
 }
 async function loadProjectSVG(svgText){
+  selectedItem=null; hoveredItem=null;
   const doc = new DOMParser().parseFromString(svgText,"image/svg+xml");
   const svg = doc.querySelector("svg");
   if(!svg){ console.warn('SVGルートが見つかりません'); return; }
@@ -3411,6 +3421,7 @@ function updateSolidContourUI(){
   for(const it of items){
     const itemVisible=it.ui?.vis?.checked ?? true;
     if(it.pipeMesh) it.pipeMesh.visible=itemVisible && (!solid || ui.solidContourVisible.checked);
+    if(it.lineLabelSprite) it.lineLabelSprite.visible=itemVisible && ui.lineNumberVisible.checked;
   }
 }
 function updateStyleControlLabels(){
