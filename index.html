@@ -976,6 +976,8 @@ addEventListener('resize',resize); resize();
 /* ==== views ==== */
 function setDefaultObliqueView(){
   updateCoordinateFrame();
+  camera.up.set(0,0,1);
+  ui.viewSelect.value='all';
 
   const v=document.getElementById('viewer');
   const aspect=Math.max(.2,v.clientWidth/Math.max(1,v.clientHeight));
@@ -1026,9 +1028,33 @@ function fitView(target=chartGroup){
   }
   controls.target.copy(cen); controls.update();
 }
-function viewTop(){ const b=getDefaultViewBox(),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x,c.y,c.z+dist); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
-function viewFront(){ const b=getDefaultViewBox(),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x,c.y-dist,c.z); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
-function viewSide(){ const b=getDefaultViewBox(),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x+dist,c.y,c.z); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
+function setOrthogonalView(key){
+  const b=getDefaultViewBox(),c=new THREE.Vector3(),s=new THREE.Vector3();
+  b.getCenter(c);b.getSize(s);
+  const dist=Math.max(s.x,s.y,s.z)*2+1;
+  const positions={
+    top:[c.x,c.y,c.z+dist],
+    bottom:[c.x,c.y,c.z-dist],
+    front:[c.x,c.y-dist,c.z],
+    back:[c.x,c.y+dist,c.z],
+    right:[c.x+dist,c.y,c.z],
+    left:[c.x-dist,c.y,c.z]
+  };
+  const p=positions[key]||positions.front;
+  camera.position.set(p[0],p[1],p[2]);
+  camera.up.set(0,(key==='top'||key==='bottom')?1:0,(key==='top'||key==='bottom')?0:1);
+  _target.copy(c);controls.target.copy(c);
+  camera.lookAt(c);
+  controls.update();
+  if(!camera.isPerspectiveCamera) setOrthoFrustum();
+  ui.viewSelect.value=key;
+}
+function viewTop(){setOrthogonalView('top');}
+function viewFront(){setOrthogonalView('front');}
+function viewSide(){setOrthogonalView('right');}
+function viewBottom(){setOrthogonalView('bottom');}
+function viewBack(){setOrthogonalView('back');}
+function viewLeft(){setOrthogonalView('left');}
 
 setDefaultObliqueView();
 
@@ -5040,7 +5066,29 @@ ui.bgColor.addEventListener('input',e=>{
 });
 ui.basisVisible.addEventListener('change', e=>{ basis.visible=e.target.checked; });
 ui.gridVisible.addEventListener('change', e=>{ const v=e.target.checked; gridXY.visible=v; gridZX.visible=v; });
-ui.viewSelect.addEventListener('change', e=>{ const v=e.target.value; if(v==='top') viewTop(); else if(v==='front') viewFront(); else if(v==='side') viewSide(); else setDefaultObliqueView(); });
+ui.viewSelect.addEventListener('change', e=>{
+  const v=e.target.value;
+  if(v==='top') viewTop();
+  else if(v==='bottom') viewBottom();
+  else if(v==='front') viewFront();
+  else if(v==='back') viewBack();
+  else if(v==='left') viewLeft();
+  else if(v==='right'||v==='side') viewSide();
+  else setDefaultObliqueView();
+});
+ui.viewCube?.addEventListener('click',e=>{
+  const face=e.target.closest('[data-view]');
+  if(!face) return;
+  const v=face.dataset.view;
+  ui.viewSelect.value=v;
+  if(v==='top') viewTop();
+  else if(v==='bottom') viewBottom();
+  else if(v==='front') viewFront();
+  else if(v==='back') viewBack();
+  else if(v==='left') viewLeft();
+  else if(v==='right') viewSide();
+});
+ui.viewCubeHome?.addEventListener('click',()=>setDefaultObliqueView());
 ui.projection.addEventListener('change', e=>{ (e.target.value==='ortho')?useOrthographic():usePerspective(); fitView(chartGroup); });
 ui.panelToggle.addEventListener('click',()=>{
   const open=ui.app.getAttribute('data-panel')!=='closed';
