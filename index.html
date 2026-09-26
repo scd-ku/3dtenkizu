@@ -43,6 +43,7 @@
   }
 
   #app{
+    position:relative;
     display:grid;
     grid-template-columns:minmax(0,1fr) 390px;
     grid-template-rows:auto minmax(0,1fr);
@@ -105,8 +106,28 @@
     min-width:46px;font-weight:800;box-shadow:0 3px 10px #2563a833
   }
   #qrBtn:hover{background:#1d5f91;color:#fff;border-color:#1d5f91}
-  #panelToggle[data-open="true"]::after{content:" ◀"}
-  #panelToggle[data-open="false"]::after{content:" ▶"}
+  .panelEdgeToggle{
+    position:absolute;z-index:30;top:55%;right:390px;
+    transform:translate(50%,-50%);
+    width:34px;height:104px;padding:8px 4px!important;
+    border:1px solid #1f6598!important;border-radius:12px 0 0 12px!important;
+    background:#2563a8!important;color:#fff!important;
+    box-shadow:0 6px 18px #0f4f7d2c!important;
+    display:flex!important;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+    transition:right .18s ease,transform .18s ease,background .15s ease
+  }
+  .panelEdgeToggle:hover{background:#1f6598!important}
+  .panelEdgeToggle svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8}
+  .panelEdgeToggle .panelLabel{
+    writing-mode:vertical-rl;text-orientation:upright;letter-spacing:.08em;
+    font-size:11px;font-weight:800
+  }
+  .panelEdgeToggle .panelArrow{font-size:16px;line-height:1}
+  .panelEdgeToggle[data-open="true"] .panelArrow::before{content:"▶"}
+  .panelEdgeToggle[data-open="false"] .panelArrow::before{content:"◀"}
+  #app[data-panel="closed"] .panelEdgeToggle{
+    right:0;transform:translate(0,-50%);border-radius:12px 0 0 12px!important
+  }
 
   /* ビューア */
   #viewer{
@@ -183,8 +204,8 @@
   }
   .settingCaption svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
   .settingRow{
-    margin:.28rem 0;padding:.42rem .55rem;border-radius:.56rem;
-    background:#f4f8fc;color:#334155;border:1px solid #e2e8f0
+    margin:.18rem 0;padding:.32rem .12rem;border-radius:0;
+    background:transparent;color:#334155;border:0
   }
   .settingRow label,.settingRow .muted,.settingRow .styleValue{color:#526779}
   .settingRow select,.settingRow input[type=number]{background:#fff;color:#0f172a}
@@ -377,7 +398,6 @@
         </div>
 
         <button id="helpBtn" class="iconOnly headerPictBtn" type="button" title="使い方"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.7 9a2.5 2.5 0 0 1 4.7 1.2c0 1.8-2.4 2.1-2.4 4M12 18h.01"></path></svg></button>
-        <button id="panelToggle" class="headerPictBtn" type="button" data-open="true"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h3M11 12h9M4 18h8M16 18h4"></path><circle cx="16" cy="6" r="2"></circle><circle cx="9" cy="12" r="2"></circle><circle cx="14" cy="18" r="2"></circle></svg>設定</button>
       </div>
 
     <div id="jmaDirectBar" aria-label="気象庁の過去天気図を直接読み込み">
@@ -410,6 +430,12 @@
     <div id="copyright">Science Communication Design Laboratory, Kagawa University</div>
   </div>
 
+  <button id="panelToggle" class="panelEdgeToggle" type="button" data-open="true" aria-label="設定パネルを閉じる">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h3M11 12h9M4 18h8M16 18h4"></path><circle cx="16" cy="6" r="2"></circle><circle cx="9" cy="12" r="2"></circle><circle cx="14" cy="18" r="2"></circle></svg>
+    <span class="panelLabel">設定</span>
+    <span class="panelArrow" aria-hidden="true"></span>
+  </button>
+
   <aside id="sidebar">
     <div class="section collapsible" data-section="overall">
       <h2 role="button" tabindex="0" aria-expanded="true">
@@ -429,6 +455,9 @@
       <div class="row settingRow"><label>座標軸</label><input id="basisVisible" type="checkbox" checked></div>
       <div class="row settingRow"><label>グリッド（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
       <div class="row settingRow"><label>天気図画像</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.90" title="0%で非表示"></div>
+      <div class="row settingRow"><label>陸地輪郭（黒線）</label><input id="landOverlayVisible" type="checkbox" checked></div>
+      <div class="row settingRow"><label>天気図の文字・数値</label><input id="mapTextVisible" type="checkbox" checked></div>
+      <div class="row settingRow"><label>前線（黒線）</label><input id="frontOverlayVisible" type="checkbox" checked></div>
 
       <div class="settingCaption">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8c3-3 6 3 9 0s6 3 9 0M3 16c3-3 6 3 9 0s6 3 9 0"></path></svg>
@@ -440,10 +469,7 @@
       </div>
       <div class="row settingRow"><label>高さの間隔</label><input id="gapFactor" type="range" min="0.2" max="1" step="0.02" value="0.82"></div>
       <div class="row settingRow"><label>線番号</label><input id="lineNumberVisible" type="checkbox" checked title="3D上の線番号を表示"></div>
-      <div class="row settingRow"><label>陸地輪郭（黒線）</label><input id="landOverlayVisible" type="checkbox" checked></div>
-      <div class="row settingRow"><label>天気図の文字・数値</label><input id="mapTextVisible" type="checkbox" checked></div>
-      <div class="row settingRow"><label>前線（黒線）</label><input id="frontOverlayVisible" type="checkbox" checked></div>
-      <div class="row settingRow"><span id="labelInfo">ラベル未解析</span><span></span></div>
+      <span id="labelInfo" hidden></span>
     </div>
 
     <div class="section collapsible" data-section="display">
@@ -4199,8 +4225,11 @@ ui.panelToggle.addEventListener('click',()=>{
   const open=ui.app.getAttribute('data-panel')!=='closed';
   ui.app.setAttribute('data-panel',open?'closed':'open');
   ui.panelToggle.dataset.open=open?'false':'true';
-  ui.panelToggle.textContent=open?'設定':'設定';
-  setTimeout(resize,0);
+  ui.panelToggle.setAttribute('aria-label',open?'設定パネルを開く':'設定パネルを閉じる');
+  setTimeout(()=>{
+    resize();
+    if(camera.isPerspectiveCamera) camera.updateProjectionMatrix();
+  },20);
 });
 ui.autoMode.addEventListener('change', ()=>{
   if(ui.autoMode.checked) applyAutoHeights();
