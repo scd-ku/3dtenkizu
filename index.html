@@ -135,26 +135,27 @@
 
   .row{display:grid;grid-template-columns:1fr auto;gap:.7rem;align-items:center;margin:.5rem 0}
   .row label{font-size:13px;color:var(--muted)}
-  #list{display:grid;gap:.7rem}
+  #list{display:grid;gap:.42rem}
 
   /* カード（やさしい角と色） */
   .card{
-    border:1px solid var(--border);background:#fff;border-radius:1rem;padding:.7rem .7rem .6rem;
-    box-shadow:0 4px 14px #0000000a
+    border:1px solid var(--border);background:#fff;border-radius:.78rem;padding:.48rem .55rem .42rem;
+    box-shadow:0 3px 10px #00000008
   }
-  .card .t{display:flex;gap:.6rem;align-items:center;margin-bottom:.35rem}
+  .card .t{display:flex;gap:.45rem;align-items:center;margin-bottom:.18rem}
+  .card .row{margin:.24rem 0;gap:.5rem}
   .heightControl{
-    display:grid;grid-template-columns:minmax(120px,1fr) 92px;
-    gap:.55rem;align-items:center;min-width:0
+    display:grid;grid-template-columns:minmax(105px,1fr) 78px;
+    gap:.42rem;align-items:center;min-width:0
   }
   .heightControl input[type=range]{width:100%;min-width:110px}
   .heightControl input[type=number]{
-    width:92px;box-sizing:border-box;padding:.38rem .45rem;
-    border:1px solid var(--border);border-radius:.55rem;font-size:13px
+    width:78px;box-sizing:border-box;padding:.28rem .36rem;
+    border:1px solid var(--border);border-radius:.48rem;font-size:12px
   }
   .chip{
-    display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--border);
-    background:var(--chip); padding:.25rem .55rem;border-radius:999px;font-size:12px;font-weight:700;color:#334155
+    display:inline-flex;align-items:center;gap:.35rem;border:1px solid var(--border);
+    background:var(--chip); padding:.18rem .45rem;border-radius:999px;font-size:11px;font-weight:700;color:#334155
   }
   .small{font-size:12px}
   .muted{color:#6b7280;font-size:12px;margin-left:.4rem}
@@ -169,9 +170,8 @@
   .menu .sep{height:1px; background:#e5e7eb; margin:.25rem .25rem}
   .card.focus-ring{outline:2px solid var(--accent); box-shadow:0 0 0 4px #4f46e530}
   .card.selected{
-    background:#fff;border:3px solid #ff8a00;color:inherit;
-    padding:calc(.7rem - 2px) calc(.7rem - 2px) calc(.6rem - 2px);
-    box-shadow:0 0 0 2px #ff8a0022,0 6px 18px #ff8a0020
+    background:#fff;border-color:#ff8a00;color:inherit;
+    box-shadow:0 0 0 2px #ff8a0033,0 4px 12px #ff8a0018
   }
   .card.selected .chip{
     background:var(--chip);border-color:#ff8a00;color:#334155
@@ -2418,19 +2418,23 @@ function disposeLineLabel(it){
 }
 function makeLineNumberSprite(text){
   const canvas=document.createElement('canvas');
-  canvas.width=96; canvas.height=64;
+  canvas.width=80; canvas.height=80;
   const ctx=canvas.getContext('2d');
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.clearRect(0,0,80,80);
 
-  ctx.font='900 42px system-ui, sans-serif';
+  ctx.beginPath();
+  ctx.arc(40,40,34,0,Math.PI*2);
+  ctx.fillStyle='rgba(10,14,20,.94)';
+  ctx.fill();
+  ctx.lineWidth=3;
+  ctx.strokeStyle='rgba(255,255,255,.92)';
+  ctx.stroke();
+
+  ctx.font='900 30px system-ui, sans-serif';
   ctx.textAlign='center';
   ctx.textBaseline='middle';
-  // パイプ上で読める白抜き数字。縁だけごく薄く付ける。
-  ctx.lineWidth=5;
-  ctx.strokeStyle='rgba(0,0,0,.28)';
-  ctx.strokeText(text,48,34);
   ctx.fillStyle='#fff';
-  ctx.fillText(text,48,34);
+  ctx.fillText(String(parseInt(text,10)),40,41);
 
   const tex=new THREE.CanvasTexture(canvas);
   tex.colorSpace=THREE.SRGBColorSpace;
@@ -2438,10 +2442,9 @@ function makeLineNumberSprite(text){
     map:tex,transparent:true,depthTest:true,depthWrite:false
   });
   const sp=new THREE.Sprite(mat);
-  // パイプ直径に近い高さに固定する。
-  const h=PIPE_RADIUS*2.15;
-  sp.scale.set(h*1.45,h,1);
-  sp.renderOrder=3;
+  const d=PIPE_RADIUS*2.35;
+  sp.scale.set(d,d,1);
+  sp.renderOrder=4;
   return sp;
 }
 function representativeLabelPoint(it){
