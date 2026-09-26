@@ -2540,6 +2540,10 @@ ui.lineNumberVisible.addEventListener('change',updateLineNumberLabels);
 ui.landOverlayVisible.addEventListener('change',updateWeatherOverlayVisibility);
 ui.mapTextVisible.addEventListener('change',updateWeatherOverlayVisibility);
 ui.frontOverlayVisible.addEventListener('change',updateWeatherOverlayVisibility);
+ui.overlayHeight.addEventListener('input',updateWeatherOverlayHeight);
+ui.overlayThickness.addEventListener('input',()=>{
+  if(lastRawSvgText) rebuildWeatherFeatureOverlays(lastRawSvgText);
+});
 
 
 /* ==== 天気図の陸地輪郭・文字・前線オーバーレイ ==== */
@@ -2633,18 +2637,28 @@ function featureLineGroupFromElements(svg,elements){
   try{
     const loader=new SVGLoader();
     const parsed=loader.parse(new XMLSerializer().serializeToString(out));
+    const radius=Math.max(.25,parseFloat(ui.overlayThickness?.value)||1.2);
     for(const p of parsed.paths){
       for(const sub of p.subPaths){
         const pts2=sub.getPoints(100);
         if(pts2.length<2) continue;
         const pts=pts2.map(pt=>new THREE.Vector3(+pt.x,-pt.y,0));
-        const geom=new THREE.BufferGeometry().setFromPoints(pts);
-        const mat=new THREE.LineBasicMaterial({
-          color:0x080808,transparent:true,opacity:1,depthTest:true,depthWrite:false
-        });
-        const line=new THREE.Line(geom,mat);
-        line.renderOrder=30;
-        group.add(line);
+        let obj;
+        if(rendererMode==='webgl'){
+          const geom=buildTubeGeometry(pts,radius);
+          const mat=new THREE.MeshBasicMaterial({
+            color:0x080808,transparent:false,depthTest:true,depthWrite:true
+          });
+          obj=new THREE.Mesh(geom,mat);
+        }else{
+          const geom=new THREE.BufferGeometry().setFromPoints(pts);
+          const mat=new THREE.LineBasicMaterial({
+            color:0x080808,transparent:false,opacity:1,depthTest:true,depthWrite:true
+          });
+          obj=new THREE.Line(geom,mat);
+        }
+        obj.renderOrder=30;
+        group.add(obj);
       }
     }
   }catch(err){
@@ -2802,7 +2816,8 @@ function rebuildWeatherFeatureOverlays(rawSvgText){
 function updateWeatherOverlayHeight(){
   const visible=items.filter(it=>it.ui?.vis?.checked??true);
   const maxLocal=visible.length?Math.max(0,...visible.map(it=>it.height*HEIGHT_SCALE)):0;
-  weatherOverlayRoot.position.z=maxLocal+Math.max(PIPE_RADIUS*4.2,6);
+  const extra=Math.max(2,parseFloat(ui.overlayHeight?.value)||18);
+  weatherOverlayRoot.position.z=maxLocal+extra;
 }
 function updateWeatherOverlayVisibility(){
   landOverlayGroup.visible=!!ui.landOverlayVisible?.checked;
@@ -3799,7 +3814,10 @@ function buildProjectSVG(){
     lineNumberVisible: ui.lineNumberVisible.checked,
     landOverlayVisible: ui.landOverlayVisible.checked,
     mapTextVisible: ui.mapTextVisible.checked,
-    frontOverlayVisible: ui.frontOverlayVisible.checked
+    frontOverlayVisible: ui.frontOverlayVisible.checked,
+    overlayThickness: parseFloat(ui.overlayThickness.value),
+    overlayHeight: parseFloat(ui.overlayHeight.value),
+    himawariOpacity: parseFloat(ui.himawariOpacity.value)
   });
   svg.appendChild(meta);
 
@@ -3888,6 +3906,9 @@ async function loadProjectSVG(svgText){
     if(typeof meta?.landOverlayVisible==='boolean') ui.landOverlayVisible.checked=meta.landOverlayVisible;
     if(typeof meta?.mapTextVisible==='boolean') ui.mapTextVisible.checked=meta.mapTextVisible;
     if(typeof meta?.frontOverlayVisible==='boolean') ui.frontOverlayVisible.checked=meta.frontOverlayVisible;
+    if(isFinite(meta?.overlayThickness)) ui.overlayThickness.value=String(meta.overlayThickness);
+    if(isFinite(meta?.overlayHeight)) ui.overlayHeight.value=String(meta.overlayHeight);
+    if(isFinite(meta?.himawariOpacity)) ui.himawariOpacity.value=String(meta.himawariOpacity);
     updateStyleControlLabels();
     updateWeatherOverlayVisibility();
     updateSolidContourUI();
