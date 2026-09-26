@@ -203,6 +203,16 @@
     border-left:4px solid #2b7fb5
   }
   .settingCaption svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
+  .settingSubhead{
+    margin:.5rem 0 .18rem;padding-left:.25rem;
+    color:#334155;font-size:12px;font-weight:800
+  }
+  .sourceCredit{
+    margin:.18rem 0 .48rem;padding-left:.25rem;
+    color:#64748b;font-size:10px;line-height:1.55
+  }
+  .sourceCredit a{color:#2563a8;text-decoration:none}
+  .sourceCredit a:hover{text-decoration:underline}
   .settingRow{
     margin:.18rem 0;padding:.32rem .12rem;border-radius:0;
     background:transparent;color:#334155;border:0
@@ -383,18 +393,18 @@
 
         <button id="openBtn" class="headerPictBtn" type="button"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h7l2 2h9v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path><path d="M3 9h18"></path></svg>ファイル ▾</button>
         <input id="fileRaw" type="file" accept=".svg,.svgz,image/svg+xml,application/gzip">
-        <input id="fileSaved" type="file" accept=".svg">
+        <input id="fileSaved" type="file" accept=".json,.3dtenkizu.json,.svg">
         <div id="openMenu" class="menu">
           <button data-act="open-raw">SVG / SVGZを開く</button>
           <div class="sep"></div>
-          <button data-act="open-saved">保存した3D天気図を開く</button>
+          <button data-act="open-saved">保存した設定情報を開く</button>
         </div>
 
         <button id="exportBtn" class="headerPictBtn" type="button"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h12l2 2v16H5Z"></path><path d="M8 3v6h8V3M8 15h8v6H8Z"></path></svg>保存 ▾</button>
         <div id="exportMenu" class="menu">
-          <button data-act="export-stl">STLを書き出す</button>
+          <button data-act="export-stl">現在の立体をSTLで保存</button>
           <div class="sep"></div>
-          <button data-act="save-svg">SVGを保存する</button>
+          <button data-act="save-settings">表示設定を保存</button>
         </div>
 
         <button id="helpBtn" class="iconOnly headerPictBtn" type="button" title="使い方"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.7 9a2.5 2.5 0 0 1 4.7 1.2c0 1.8-2.4 2.1-2.4 4M12 18h.01"></path></svg></button>
@@ -454,10 +464,25 @@
       <div class="row settingRow"><label>背景色</label><input id="bgColor" type="color" value="#dff0ff"></div>
       <div class="row settingRow"><label>座標軸</label><input id="basisVisible" type="checkbox" checked></div>
       <div class="row settingRow"><label>グリッド（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
-      <div class="row settingRow"><label>天気図画像</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.90" title="0%で非表示"></div>
-      <div class="row settingRow"><label>陸地輪郭（黒線）</label><input id="landOverlayVisible" type="checkbox" checked></div>
-      <div class="row settingRow"><label>天気図の文字・数値</label><input id="mapTextVisible" type="checkbox" checked></div>
-      <div class="row settingRow"><label>前線（黒線）</label><input id="frontOverlayVisible" type="checkbox" checked></div>
+
+      <div class="settingCaption">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM7 8h10M7 12h10M7 16h6"></path></svg>
+        天気図設定
+      </div>
+      <div class="settingSubhead">画像</div>
+      <div class="row settingRow"><label>天気図</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.90" title="0%で非表示"></div>
+      <div class="row settingRow"><label>気象衛星ひまわり</label><input id="himawariOpacity" type="range" min="0" max="1" step="0.01" value="0" title="0%で非表示"></div>
+      <div class="sourceCredit">
+        <a id="himawariSourceLink" href="https://www.jma.go.jp/bosai/himawari/" target="_blank" rel="noopener noreferrer">気象衛星ひまわり画像（気象庁）</a><br>
+        出典：気象庁「気象衛星ひまわり」　<span id="himawariTimeLabel">天気図読込時に同時刻画像を取得</span>
+      </div>
+
+      <div class="settingSubhead">抽出情報</div>
+      <div class="row settingRow"><label>太さ</label><input id="overlayThickness" type="range" min="0.4" max="4.0" step="0.1" value="1.2"></div>
+      <div class="row settingRow"><label>高さ</label><input id="overlayHeight" type="range" min="2" max="80" step="1" value="18"></div>
+      <div class="row settingRow"><label>海岸線</label><input id="landOverlayVisible" type="checkbox" checked></div>
+      <div class="row settingRow"><label>文字・数値</label><input id="mapTextVisible" type="checkbox" checked></div>
+      <div class="row settingRow"><label>前線</label><input id="frontOverlayVisible" type="checkbox" checked></div>
 
       <div class="settingCaption">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8c3-3 6 3 9 0s6 3 9 0M3 16c3-3 6 3 9 0s6 3 9 0"></path></svg>
