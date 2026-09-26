@@ -2466,6 +2466,240 @@ function normalizeSvgRoot(svgEl){
   svgEl.setAttribute("viewBox",`0 0 ${w} ${h}`);
   return {w,h};
 }
+
+/* ==== 気象衛星ひまわり（同時刻・同範囲） ==== */
+const HIMAWARI_DATA_BASE='https://www.jma.go.jp/bosai/himawari/data/satimg';
+const HIMAWARI_TARGET_TIMES=HIMAWARI_DATA_BASE+'/targetTimes_fd.json';
+// SPASは北緯60度・東経140度を基準とするステレオ投影。
+// 日本周辺の描画域は概ね左下(115E,9N)～右上(178E,54N)。
+const SPAS_PROJ={lat0:60,lon0:140,llLat:9,llLon:115,urLat:54,urLon:178};
+
+function ymdhms14ToDate(s){
+  if(!/^\d{14}$/.test(String(s||''))) return null;
+  const a=String(s);
+  return new Date(Date.UTC(+a.slice(0,4),+a.slice(4,6)-1,+a.slice(6,8),+a.slice(8,10),+a.slice(10,12),+a.slice(12,14)));
+}
+function dateTo14(d){
+  return d.getUTCFullYear()+pad2(d.getUTCMonth()+1)+pad2(d.getUTCDate())+
+    pad2(d.getUTCHours())+pad2(d.getUTCMinutes())+pad2(d.getUTCSeconds());
+}
+function formatUtc14Jst(s){
+  const d=ymdhms14ToDate(s);
+  if(!d) return '';
+  const j=new Date(d.getTime()+9*3600000);
+  return j.getUTCFullYear()+'-'+pad2(j.getUTCMonth()+1)+'-'+pad2(j.getUTCDate())+
+    ' '+pad2(j.getUTCHours())+':'+pad2(j.getUTCMinutes())+' JST';
+}
+function inferWeatherUtc14(svgText){
+  try{
+    const doc=new DOMParser().parseFromString(svgText,'image/svg+xml');
+    const title=doc.querySelector('title');
+    const dt=title?.getAttribute('dateTime')||title?.getAttribute('datetime')||'';
+    if(dt){
+      const d=new Date(dt);
+      if(Number.isFinite(d.getTime())) return dateTo14(d);
+    }
+  }catch{}
+  try{return selectedJstToUtcInfo().timestamp14;}catch{return '';}
+}
+async function resolveHimawariTime(desired14){
+  try{
+    const res=await fetch(HIMAWARI_TARGET_TIMES,{cache:'no-store',mode:'cors'});
+    if(res.ok){
+      const arr=await res.json();
+      const wanted=ymdhms14ToDate(desired14)?.getTime();
+      if(Number.isFinite(wanted)&&Array.isArray(arr)&&arr.length){
+        let best=null,bd=Infinity;
+        for(const x of arr){
+          const s=String(x.validtime||x.basetime||'');
+          const t=ymdhms14ToDate(s)?.getTime();
+          if(!Number.isFinite(t)) continue;
+          const d=Math.abs(t-wanted);
+          if(d<bd){bd=d;best={basetime:String(x.basetime||s),validtime:s};}
+        }
+        if(best&&bd<=20*60*1000) return best;
+      }
+    }
+  }catch(err){
+    console.warn('Himawari targetTimes fetch failed; exact time is used.',err);
+  }
+  return {basetime:desired14,validtime:desired14};
+}
+function stereForward(lonDeg,latDeg){
+  const lon=THREE.MathUtils.degToRad(lonDeg),lat=THREE.MathUtils.degToRad(latDeg);
+  const lon0=THREE.MathUtils.degToRad(SPAS_PROJ.lon0),lat0=THREE.MathUtils.degToRad(SPAS_PROJ.lat0);
+  const dlon=lon-lon0;
+  const den=1+Math.sin(lat0)*Math.sin(lat)+Math.cos(lat0)*Math.cos(lat)*Math.cos(dlon);
+  const k=2/Math.max(1e-9,den);
+  return {
+    x:k*Math.cos(lat)*Math.sin(dlon),
+    y:k*(Math.cos(lat0)*Math.sin(lat)-Math.sin(lat0)*Math.cos(lat)*Math.cos(dlon))
+  };
+}
+function stereInverse(x,y){
+  const lon0=THREE.MathUtils.degToRad(SPAS_PROJ.lon0),lat0=THREE.MathUtils.degToRad(SPAS_PROJ.lat0);
+  const rho=Math.hypot(x,y);
+  if(rho<1e-12) return {lon:SPAS_PROJ.lon0,lat:SPAS_PROJ.lat0};
+  const cc=2*Math.atan2(rho,2);
+  const lat=Math.asin(Math.cos(cc)*Math.sin(lat0)+(y*Math.sin(cc)*Math.cos(lat0)/rho));
+  const lon=lon0+Math.atan2(x*Math.sin(cc),rho*Math.cos(lat0)*Math.cos(cc)-y*Math.sin(lat0)*Math.sin(cc));
+  return {lon:THREE.MathUtils.radToDeg(lon),lat:THREE.MathUtils.radToDeg(lat)};
+}
+function webMercatorWorldPixel(lon,lat,z){
+  const n=Math.pow(2,z)*256;
+  const clamped=Math.max(-85.05112878,Math.min(85.05112878,lat));
+  const x=(lon+180)/360*n;
+  const rad=THREE.MathUtils.degToRad(clamped);
+  const y=(1-Math.log(Math.tan(rad)+1/Math.cos(rad))/Math.PI)/2*n;
+  return {x,y};
+}
+async function imageBitmapFromUrl(url){
+  const res=await fetch(url,{cache:'force-cache',mode:'cors'});
+  if(!res.ok) throw new Error('Himawari tile HTTP '+res.status);
+  const blob=await res.blob();
+  if('createImageBitmap' in window) return await createImageBitmap(blob);
+  return await new Promise((resolve,reject)=>{
+    const im=new Image(); const u=URL.createObjectURL(blob);
+    im.onload=()=>{URL.revokeObjectURL(u);resolve(im);};
+    im.onerror=()=>{URL.revokeObjectURL(u);reject(new Error('Himawari tile decode failed'));};
+    im.src=u;
+  });
+}
+async function buildHimawariProjectedCanvas(basetime,validtime){
+  const z=4,tileSize=256,n=Math.pow(2,z);
+  // SPAS描画域を十分含むタイルを取得。
+  const geo={minLon:108,maxLon:180,minLat:4,maxLat:60};
+  const a=webMercatorWorldPixel(geo.minLon,geo.maxLat,z);
+  const b=webMercatorWorldPixel(geo.maxLon,geo.minLat,z);
+  const minTx=Math.max(0,Math.floor(a.x/tileSize));
+  const maxTx=Math.min(n-1,Math.floor((b.x-1)/tileSize));
+  const minTy=Math.max(0,Math.floor(a.y/tileSize));
+  const maxTy=Math.min(n-1,Math.floor((b.y-1)/tileSize));
+
+  const src=document.createElement('canvas');
+  src.width=(maxTx-minTx+1)*tileSize;
+  src.height=(maxTy-minTy+1)*tileSize;
+  const sctx=src.getContext('2d',{willReadFrequently:true});
+  sctx.fillStyle='#000';sctx.fillRect(0,0,src.width,src.height);
+
+  const jobs=[];
+  for(let ty=minTy;ty<=maxTy;ty++){
+    for(let tx=minTx;tx<=maxTx;tx++){
+      const url=HIMAWARI_DATA_BASE+'/'+basetime+'/fd/'+validtime+'/B13/TBB/'+z+'/'+tx+'/'+ty+'.jpg';
+      jobs.push((async()=>{
+        const img=await imageBitmapFromUrl(url);
+        sctx.drawImage(img,(tx-minTx)*tileSize,(ty-minTy)*tileSize,tileSize,tileSize);
+        img.close?.();
+      })());
+    }
+  }
+  await Promise.all(jobs);
+
+  const srcData=sctx.getImageData(0,0,src.width,src.height).data;
+
+  const ll=stereForward(SPAS_PROJ.llLon,SPAS_PROJ.llLat);
+  const ur=stereForward(SPAS_PROJ.urLon,SPAS_PROJ.urLat);
+  const minX=Math.min(ll.x,ur.x),maxX=Math.max(ll.x,ur.x);
+  const minY=Math.min(ll.y,ur.y),maxY=Math.max(ll.y,ur.y);
+
+  const frame=lastSvgDims&&lastRawSvgText
+    ? detectWeatherMapInnerBounds(lastRawSvgText,lastSvgDims)
+    : {minX:0,maxX:800,minY:-720,maxY:0};
+  const ratio=Math.max(.55,Math.min(1.5,(frame.maxY-frame.minY)/(frame.maxX-frame.minX)));
+  const out=document.createElement('canvas');
+  out.width=900;
+  out.height=Math.max(480,Math.round(out.width*ratio));
+  const octx=out.getContext('2d');
+  const image=octx.createImageData(out.width,out.height);
+  const dst=image.data;
+
+  for(let py=0;py<out.height;py++){
+    const fy=py/(out.height-1);
+    const syProj=maxY-(maxY-minY)*fy;
+    for(let px=0;px<out.width;px++){
+      const fx=px/(out.width-1);
+      const sxProj=minX+(maxX-minX)*fx;
+      const llp=stereInverse(sxProj,syProj);
+      const wp=webMercatorWorldPixel(llp.lon,llp.lat,z);
+      const sx=Math.round(wp.x-minTx*tileSize);
+      const sy=Math.round(wp.y-minTy*tileSize);
+      const di=(py*out.width+px)*4;
+      if(sx>=0&&sx<src.width&&sy>=0&&sy<src.height){
+        const si=(sy*src.width+sx)*4;
+        dst[di]=srcData[si];dst[di+1]=srcData[si+1];dst[di+2]=srcData[si+2];dst[di+3]=255;
+      }else{
+        dst[di]=0;dst[di+1]=0;dst[di+2]=0;dst[di+3]=0;
+      }
+    }
+  }
+  octx.putImageData(image,0,0);
+  return out;
+}
+async function setHimawariPlaneFromDataUrl(dataUrl){
+  currentHimawariDataUrl=dataUrl||'';
+  if(!dataUrl||rendererMode!=='webgl'){
+    if(satellitePlane) satellitePlane.visible=false;
+    return;
+  }
+  const tex=await new THREE.TextureLoader().loadAsync(dataUrl);
+  tex.colorSpace=THREE.SRGBColorSpace;
+  tex.minFilter=THREE.LinearFilter;tex.magFilter=THREE.LinearFilter;
+  const b=detectWeatherMapInnerBounds(lastRawSvgText,lastSvgDims);
+  const bw=b.maxX-b.minX,bh=b.maxY-b.minY;
+  const cx=(b.minX+b.maxX)/2-lastSvgDims.w/2;
+  const cy=(b.minY+b.maxY)/2+lastSvgDims.h/2;
+  const geom=new THREE.PlaneGeometry(bw,bh);
+  const mat=new THREE.MeshBasicMaterial({
+    map:tex,transparent:true,opacity:parseFloat(ui.himawariOpacity.value)||0,
+    side:THREE.DoubleSide,depthWrite:false
+  });
+  if(!satellitePlane){
+    satellitePlane=new THREE.Mesh(geom,mat);
+    satellitePlane.renderOrder=-2;
+    chartGroup.add(satellitePlane);
+  }else{
+    satellitePlane.geometry.dispose();
+    satellitePlane.material.map?.dispose?.();
+    satellitePlane.material.dispose();
+    satellitePlane.geometry=geom;satellitePlane.material=mat;
+  }
+  satellitePlane.position.set(cx,cy,-.22*HEIGHT_SCALE);
+  satellitePlane.visible=parseFloat(ui.himawariOpacity.value)>0.001;
+}
+function applyHimawariUI(){
+  if(!satellitePlane) return;
+  const opacity=Math.max(0,Math.min(1,parseFloat(ui.himawariOpacity.value)||0));
+  satellitePlane.visible=opacity>.001;
+  satellitePlane.material.opacity=opacity;
+}
+async function loadHimawariForWeatherTime(desired14=null){
+  if(!lastSvgDims||!lastRawSvgText||rendererMode!=='webgl') return;
+  const wanted=desired14||inferWeatherUtc14(lastRawSvgText);
+  if(!wanted) return;
+  try{
+    ui.himawariTimeLabel.textContent='取得中…';
+    const t=await resolveHimawariTime(wanted);
+    const canvas=await buildHimawariProjectedCanvas(t.basetime,t.validtime);
+    const dataUrl=canvas.toDataURL('image/jpeg',.88);
+    currentHimawariInfo={
+      basetime:t.basetime,validtime:t.validtime,
+      band:'B13',product:'TBB',area:'SPAS',
+      source:'Japan Meteorological Agency',
+      sourcePage:'https://www.jma.go.jp/bosai/himawari/'
+    };
+    await setHimawariPlaneFromDataUrl(dataUrl);
+    ui.himawariTimeLabel.textContent=formatUtc14Jst(t.validtime)+'・赤外画像';
+    ui.himawariSourceLink.href=currentHimawariInfo.sourcePage;
+  }catch(err){
+    console.warn('Himawari image load failed',err);
+    currentHimawariInfo=null;
+    currentHimawariDataUrl='';
+    if(satellitePlane) satellitePlane.visible=false;
+    ui.himawariTimeLabel.textContent='同時刻画像を取得できませんでした';
+  }
+}
+ui.himawariOpacity.addEventListener('input',applyHimawariUI);
+
 async function buildOrUpdateWeatherPlane(rawSvgText){
   if(!lastSvgDims) return;
   const {w,h}=lastSvgDims;
@@ -4014,6 +4248,7 @@ ui.fileRaw.addEventListener('change', async (e)=>{
       lastSvgDims={w,h};
       lastRawSvgText=new XMLSerializer().serializeToString(svg);
       await buildOrUpdateWeatherPlane(lastRawSvgText);
+      loadHimawariForWeatherTime(inferWeatherUtc14(lastRawSvgText));
     }
     const only=extractIsobarsOnly(raw);
     await loadSVGFromString(only);
@@ -4237,7 +4472,8 @@ async function loadJmaDirect(){
   setJmaStatus('気象庁から天気図を読み込んでいます…');
   try{
     const result=await fetchJmaChart();
-    const {svgText,url,label}=result;
+    const {svgText,url,label,pageUrl}=result;
+    currentJmaSourceInfo={url,pageUrl,label,date:ui.jmaDate.value,time:ui.jmaTime.value};
     const doc=new DOMParser().parseFromString(svgText,'image/svg+xml');
     const svg=doc.querySelector('svg');
     if(!svg) throw new Error('SVGルートが見つかりません。');
@@ -4246,6 +4482,8 @@ async function loadJmaDirect(){
     lastSvgDims={w,h};
     lastRawSvgText=new XMLSerializer().serializeToString(svg);
     await buildOrUpdateWeatherPlane(lastRawSvgText);
+    const selectedUtc=selectedJstToUtcInfo().timestamp14;
+    loadHimawariForWeatherTime(selectedUtc);
 
     const only=extractIsobarsOnly(svgText);
     await loadSVGFromString(only);
