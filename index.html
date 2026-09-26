@@ -320,7 +320,9 @@
     padding:.46rem .58rem;border-radius:.58rem;font-size:13px
   }
   #jmaDirectBar input[type=date]{width:126px}
-  #jmaLoadBtn{font-weight:800;background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+  .jmaStepBtn{min-width:34px!important;width:34px;height:34px;padding:.35rem!important;color:#2563a8;background:#f8fbff!important;border-color:#cfe2f2!important}
+  .jmaStepBtn:hover{background:#eaf4fb!important;color:#1f6598}
+  .jmaStepBtn:disabled{opacity:.45;cursor:wait}
   #jmaStatus{
     position:absolute;left:12px;top:12px;z-index:4;
     max-width:min(640px,calc(100% - 24px));padding:.55rem .7rem;
@@ -418,6 +420,7 @@
     <div id="jmaDirectBar" aria-label="気象庁の過去天気図を直接読み込み">
       <span class="sourceTitle"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17c3-4 5 2 8-2s5 2 10-3"></path><path d="M4 7h16M7 4v6M16 4v6"></path></svg>気象庁天気図</span>
       <span class="sourceHint">日付と日本時間を選択</span>
+      <button id="jmaPrevBtn" class="iconOnly jmaStepBtn" type="button" title="ひとつ前の天気図" aria-label="ひとつ前の天気図"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7"></path></svg></button>
       <input id="jmaDate" type="date" title="日本時間の日付">
       <select id="jmaTime" title="日本時間">
         <option value="03">03時</option>
@@ -428,7 +431,7 @@
         <option value="18">18時</option>
         <option value="21">21時</option>
       </select>
-      <button id="jmaLoadBtn" class="headerPictBtn" type="button"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4"></path><path d="M4 19h16"></path></svg>気象庁SVGを読み込む</button>
+      <button id="jmaNextBtn" class="iconOnly jmaStepBtn" type="button" title="ひとつ後の天気図" aria-label="ひとつ後の天気図"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"></path></svg></button>
       <a id="jmaArchiveLink" href="https://www.data.jma.go.jp/yoho/wxchart/quickdaily.html" target="_blank" rel="noopener noreferrer" title="気象庁の1日表示">元データ</a>
       <button id="openSvgBtn" class="headerPictBtn" type="button"><svg class="headerPict" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h7l2 2h9v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path><path d="M12 12v5M9.5 14.5 12 12l2.5 2.5"></path></svg>手元のSVGを開く</button>
     </div>
@@ -482,7 +485,7 @@
       <div class="settingSubhead">抽出情報</div>
       <div class="settingSubgroup">
         <div class="row settingRow"><label>太さ</label><input id="overlayThickness" type="range" min="0.4" max="4.0" step="0.1" value="1.2"></div>
-        <div class="row settingRow"><label>高さ</label><input id="overlayHeight" type="range" min="2" max="80" step="1" value="18"></div>
+        <div class="row settingRow"><label>高さ</label><input id="overlayHeight" type="range" min="0" max="1" step="0.01" value="1" title="左端：天気図面／右端：最上部の等圧線"></div>
         <div class="row settingRow"><label>海岸線</label><input id="landOverlayVisible" type="checkbox" checked></div>
         <div class="row settingRow"><label>文字・数値</label><input id="mapTextVisible" type="checkbox" checked></div>
         <div class="row settingRow"><label>前線</label><input id="frontOverlayVisible" type="checkbox" checked></div>
@@ -650,7 +653,8 @@ const ui = {
   panelToggle: document.getElementById('panelToggle'),
   jmaDate: document.getElementById('jmaDate'),
   jmaTime: document.getElementById('jmaTime'),
-  jmaLoadBtn: document.getElementById('jmaLoadBtn'),
+  jmaPrevBtn: document.getElementById('jmaPrevBtn'),
+  jmaNextBtn: document.getElementById('jmaNextBtn'),
   openSvgBtn: document.getElementById('openSvgBtn'),
   jmaStatus: document.getElementById('jmaStatus'),
   jmaArchiveLink: document.getElementById('jmaArchiveLink'),
@@ -775,18 +779,18 @@ const gridZX=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridZX.material.o
 function makeThickAxis(direction,color){
   const group=new THREE.Group();
   const material=new THREE.MeshBasicMaterial({color});
-  const shaft=new THREE.Mesh(new THREE.CylinderGeometry(3.4,3.4,1,14),material);
+  const shaft=new THREE.Mesh(new THREE.CylinderGeometry(4.6,4.6,1,16),material);
   shaft.position.y=.5;
-  const head=new THREE.Mesh(new THREE.ConeGeometry(12,30,18),material);
+  const head=new THREE.Mesh(new THREE.ConeGeometry(14,32,20),material);
   head.position.y=1;
   group.add(shaft,head);
   group.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.clone().normalize());
   group.userData.setLength=(len)=>{
-    const headLen=Math.min(30,Math.max(18,len*.078));
+    const headLen=Math.min(32,Math.max(20,len*.082));
     const shaftLen=Math.max(1,len-headLen*.72);
     shaft.scale.y=shaftLen;
     shaft.position.y=shaftLen/2;
-    head.scale.setScalar(Math.max(.72,Math.min(1.28,headLen/30)));
+    head.scale.setScalar(Math.max(.74,Math.min(1.3,headLen/32)));
     head.position.y=shaftLen+headLen*.36;
   };
   group.userData.setLength(300);
