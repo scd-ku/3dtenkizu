@@ -1002,7 +1002,9 @@ function syncViewCubeFromCamera(){
   const yaw=Math.atan2(offset.x,-offset.y);
   const pitch=Math.asin(THREE.MathUtils.clamp(offset.z,-1,1));
   const rx=-THREE.MathUtils.radToDeg(pitch);
-  const ry=THREE.MathUtils.radToDeg(yaw);
+  // カメラの公転方向ではなく、画面上で天気図が回って見える方向に合わせる。
+  // Z軸まわりはカメラ方位角と見かけの回転方向が逆になるため符号を反転する。
+  const ry=-THREE.MathUtils.radToDeg(yaw);
   ui.viewCube.style.transform=`rotateX(${rx.toFixed(3)}deg) rotateY(${ry.toFixed(3)}deg)`;
 }
 
