@@ -1866,6 +1866,7 @@ function rebuildAllDisplayGeometry(){
   currentLinesGroup.clear();
   solidTerrainMesh=null;
   for(const it of items) attachDisplayObjects(it,currentLinesGroup);
+  rebuildLineNumberLabels();
   updateHeightsAndColors();
 }
 
@@ -1959,6 +1960,7 @@ function applyImageUI(){
   weatherPlane.position.z=-0.1*HEIGHT_SCALE;
 }
 ui.imgOpacity.addEventListener('input',applyImageUI);
+ui.lineNumberVisible.addEventListener('change',updateLineNumberLabels);
 
 /* ==== SVG → items ==== */
 function centroidXY(pts){ let sx=0,sy=0; for(const p of pts){sx+=p.x;sy+=p.y;} const n=pts.length||1; return {x:sx/n,y:sy/n}; }
@@ -2377,6 +2379,91 @@ async function assignPressuresFromLabelsOrAreas(){
   assignActualPressureValues();
 }
 
+function disposeLineLabel(it){
+  if(!it?.lineLabelSprite) return;
+  it.lineLabelSprite.material?.map?.dispose?.();
+  it.lineLabelSprite.material?.dispose?.();
+  it.lineLabelSprite.parent?.remove(it.lineLabelSprite);
+  it.lineLabelSprite=null;
+}
+function makeLineNumberSprite(text){
+  const canvas=document.createElement('canvas');
+  canvas.width=160; canvas.height=64;
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='rgba(15,23,42,.88)';
+  ctx.beginPath();
+  if(ctx.roundRect) ctx.roundRect(4,4,152,56,18);
+  else ctx.rect(4,4,152,56);
+  ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.9)';
+  ctx.lineWidth=3; ctx.stroke();
+  ctx.fillStyle='#fff';
+  ctx.font='700 30px system-ui, sans-serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(text,80,33);
+
+  const tex=new THREE.CanvasTexture(canvas);
+  tex.colorSpace=THREE.SRGBColorSpace;
+  const mat=new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false,depthWrite:false});
+  const sp=new THREE.Sprite(mat);
+  sp.scale.set(36,14,1);
+  sp.renderOrder=2000;
+  return sp;
+}
+function representativeLabelPoint(it){
+  const pts=it.pathPoints||[];
+  if(!pts.length) return new THREE.Vector3();
+  let bestI=Math.floor(pts.length/2),bestScore=-Infinity;
+  const w=lastSvgDims?.w||1000,h=lastSvgDims?.h||1000;
+  const cx=w*.5,cy=-h*.5;
+  for(let i=0;i<pts.length;i+=Math.max(1,Math.floor(pts.length/40))){
+    const p=pts[i];
+    const edge=Math.min(p.x,w-p.x,p.y+h,-p.y);
+    const centerPenalty=Math.hypot(p.x-cx,p.y-cy)*.05;
+    const score=edge-centerPenalty;
+    if(score>bestScore){bestScore=score;bestI=i;}
+  }
+  return pts[bestI].clone();
+}
+function rebuildLineNumberLabels(){
+  if(!currentLinesGroup) return;
+  for(const it of items){
+    disposeLineLabel(it);
+    if(!it.listIndex) continue;
+    const sp=makeLineNumberSprite('線'+String(it.listIndex).padStart(2,'0'));
+    it.lineLabelSprite=sp;
+    currentLinesGroup.add(sp);
+  }
+  updateLineNumberLabels();
+}
+function updateLineNumberLabels(){
+  const enabled=!!ui.lineNumberVisible?.checked;
+  for(const it of items){
+    const sp=it.lineLabelSprite;
+    if(!sp) continue;
+    const p=representativeLabelPoint(it);
+    sp.position.set(p.x,p.y,it.height*HEIGHT_SCALE+11);
+    sp.visible=enabled && (it.ui?.vis?.checked ?? true);
+  }
+}
+function setSelectedItem(it,{scroll=true}={}){
+  if(selectedItem?.ui?.card) selectedItem.ui.card.classList.remove('selected');
+  if(selectedItem?.hoverMesh && selectedItem!==hoveredItem) selectedItem.hoverMesh.visible=false;
+
+  selectedItem=it||null;
+
+  if(selectedItem?.ui?.card){
+    selectedItem.ui.card.classList.add('selected');
+    if(scroll){
+      selectedItem.ui.card.scrollIntoView({block:'nearest',behavior:'smooth'});
+    }
+  }
+  if(selectedItem?.hoverMesh && (selectedItem.ui?.vis?.checked ?? true)){
+    selectedItem.hoverMesh.visible=true;
+  }
+}
+
 /* ==== auto / update ==== */
 function applyAutoHeights(){
   const spacing=Math.max(0.2,Math.min(1,parseFloat(ui.gapFactor.value)||0.82));
@@ -2404,66 +2491,99 @@ function updateHeightsAndColors(){
     applyItemTransform(it);
     applyItemAppearance(it);
   }
+  updateLineNumberLabels();
   rebuildSolidTerrain();
 }
 
 /* ==== パネル ==== */
 function focusPanelCardForItem(it){
-  const el = it?.ui?.card;
+  const el=it?.ui?.card;
   if(!el) return;
-  el.classList.add('focus-ring');
+  setSelectedItem(it,{scroll:true});
   el.setAttribute('tabindex','-1');
   el.focus({preventScroll:true});
-  el.scrollIntoView({block:'nearest', behavior:'smooth'});
-  setTimeout(()=>el.classList.remove('focus-ring'), 900);
 }
 function buildList(orderByPressure=false){
   ui.list.innerHTML='';
   let arr=items.slice();
   if(orderByPressure){
     arr.sort((a,b)=>{
-      const ap=isFinite(a.pressure)?a.pressure:Infinity;
-      const bp=isFinite(b.pressure)?b.pressure:Infinity;
+      const ap=isFinite(a.actualPressure)?a.actualPressure:(isFinite(a.pressure)?a.pressure:Infinity);
+      const bp=isFinite(b.actualPressure)?b.actualPressure:(isFinite(b.pressure)?b.pressure:Infinity);
       return ap-bp;
     });
   }
+
   let i=0;
   for(const it of arr){
-    const card=document.createElement('div'); card.className='card';
+    const card=document.createElement('div');
+    card.className='card';
+    card.role='button';
+
     const t=document.createElement('div'); t.className='t';
-    const c=document.createElement('span'); c.className='chip'; c.textContent=`線 ${(++i).toString().padStart(2,'0')}`;
-    const vis=document.createElement('input'); vis.type='checkbox'; vis.checked=it.ui?.vis?.checked ?? true; vis.title='表示/非表示';
+    const chip=document.createElement('span');
+    chip.className='chip';
+    chip.textContent='線 '+String(++i).padStart(2,'0');
+
+    const vis=document.createElement('input');
+    vis.type='checkbox';
+    vis.checked=it.ui?.vis?.checked ?? true;
+    vis.title='表示/非表示';
+    vis.addEventListener('click',e=>e.stopPropagation());
     vis.onchange=()=>{
-      const showContour=ui.displayMode.value!=='solid' || ui.solidContourVisible.checked;
-      if(it.pipeMesh) it.pipeMesh.visible=vis.checked && showContour;
+      const showContour=ui.displayMode.value!=='solid'||ui.solidContourVisible.checked;
+      if(it.pipeMesh) it.pipeMesh.visible=vis.checked&&showContour;
       if(it.pickPipeMesh) it.pickPipeMesh.visible=vis.checked;
-      if(it.hoverMesh && !vis.checked) it.hoverMesh.visible=false;
+      if(it.hoverMesh&&!vis.checked) it.hoverMesh.visible=false;
+      if(it.lineLabelSprite) it.lineLabelSprite.visible=vis.checked&&ui.lineNumberVisible.checked;
       rebuildSolidTerrain();
     };
-    const tag=document.createElement('span'); tag.className='small muted';
-    if(it.kind==='svg'){
-      tag.textContent=(it.pressureSource==='気圧値ラベル'&&isFinite(it.pressure))
-        ? String(it.pressure)+' hPa'
-        : (it.pressureSource||'等圧線');
-    }
-    t.append(c,vis,tag); card.appendChild(t);
+
+    const tag=document.createElement('span');
+    tag.className='small muted';
+    const pressureText=isFinite(it.actualPressure)?Math.round(it.actualPressure)+' hPa':'— hPa';
+    const typeText=pressureTypeLabel(it);
+    tag.innerHTML='<strong>'+pressureText+'</strong> <span style="font-size:10px">('+typeText+')</span>';
+
+    t.append(chip,vis,tag);
+    card.appendChild(t);
 
     const row1=document.createElement('div'); row1.className='row';
     const lab=document.createElement('label'); lab.textContent='高さ（Z）';
-    const slider=document.createElement('input'); slider.type='range'; slider.min=-2000; slider.max=2000; slider.step=0.1; slider.value=it.height;
-    slider.oninput=()=>{ it.height=parseFloat(slider.value); if(it.ui?.num) it.ui.num.value=it.height.toFixed(2); updateHeightsAndColors(); };
+    const slider=document.createElement('input');
+    slider.type='range';slider.min=-2000;slider.max=2000;slider.step=.1;slider.value=it.height;
+    slider.addEventListener('click',e=>e.stopPropagation());
+    slider.oninput=()=>{
+      it.height=parseFloat(slider.value);
+      if(it.ui?.num) it.ui.num.value=it.height.toFixed(2);
+      updateHeightsAndColors();
+    };
     row1.append(lab,slider); card.appendChild(row1);
 
     const row2=document.createElement('div'); row2.className='row';
     const hint=document.createElement('span'); hint.className='small'; hint.textContent='数字でも調整できるよ';
-    const num=document.createElement('input'); num.type='number'; num.className='small'; num.step=0.1; num.style.width='110px'; num.value=it.height.toFixed(2);
-    num.onchange=()=>{ const v=parseFloat(num.value)||0; it.height=v; slider.value=v; updateHeightsAndColors(); };
+    const num=document.createElement('input');
+    num.type='number';num.className='small';num.step=.1;num.style.width='110px';num.value=it.height.toFixed(2);
+    num.addEventListener('click',e=>e.stopPropagation());
+    num.onchange=()=>{
+      const v=parseFloat(num.value)||0;
+      it.height=v;slider.value=v;updateHeightsAndColors();
+    };
     row2.append(hint,num); card.appendChild(row2);
 
     it.listIndex=i;
     it.ui={slider,num,vis,card};
+
+    card.addEventListener('click',()=>{
+      setSelectedItem(it,{scroll:false});
+      if(it.hoverMesh) it.hoverMesh.visible=true;
+    });
+
+    if(it===selectedItem) card.classList.add('selected');
     ui.list.appendChild(card);
   }
+
+  rebuildLineNumberLabels();
 }
 
 /* ==== ピック & ドラッグ ==== */
@@ -2494,10 +2614,13 @@ function updateHudByClientXY(clientX,clientY,h,prefix='高さ'){
 function setHoveredItem(it,clientX,clientY){
   if(hoveredItem!==it){
     const prev=hoveredItem;
-    if(prev?.hoverMesh) prev.hoverMesh.visible=false;
+    if(prev?.hoverMesh && prev!==selectedItem) prev.hoverMesh.visible=false;
     hoveredItem=it;
     if(hoveredItem?.hoverMesh && (hoveredItem.ui?.vis?.checked ?? true)){
       hoveredItem.hoverMesh.visible=true;
+    }
+    if(selectedItem?.hoverMesh && selectedItem!==hoveredItem && (selectedItem.ui?.vis?.checked ?? true)){
+      selectedItem.hoverMesh.visible=true;
     }
   }
   if(it && !draggingItem){
@@ -2514,6 +2637,7 @@ ui.canvas.addEventListener('pointerdown',(e)=>{
   if(e.button!==0) return;
   const hit = pickFromClientXY(e.clientX, e.clientY);
   if(hit){
+    setSelectedItem(hit,{scroll:true});
     draggingItem = hit;
     lastClientY = e.clientY;
     controls.enabled = false;
@@ -2556,6 +2680,7 @@ ui.canvas.addEventListener('pointerup', endDrag);
 ui.canvas.addEventListener('pointercancel', endDrag);
 ui.canvas.addEventListener('pointerleave',e=>{
   setHoveredItem(null,e.clientX||0,e.clientY||0);
+  if(selectedItem?.hoverMesh && (selectedItem.ui?.vis?.checked ?? true)) selectedItem.hoverMesh.visible=true;
   endDrag(e);
 });
 
