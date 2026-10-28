@@ -414,7 +414,12 @@
     border:1px solid var(--border);background:#fff;border-radius:50%;
     font-size:19px;cursor:pointer
   }
-  #qrCanvas{display:block;margin:18px auto 10px}
+  #qrCanvas{
+    width:280px;height:280px;margin:18px auto 10px;
+    display:grid;place-items:center;background:#fff
+  }
+  #qrCanvas canvas,#qrCanvas img{display:block!important;margin:auto!important;max-width:100%;height:auto}
+  .qrFallback{font-size:13px;line-height:1.6;text-align:center;color:#b91c1c;padding:18px}
   .qrUrl{text-align:center;word-break:break-all;font-size:13px;color:#475569}
   .helpNote{padding:.7rem .8rem;background:#f8fafc;border:1px solid var(--border);border-radius:.8rem}
   @media(max-width:1180px){
@@ -651,7 +656,7 @@
   <div class="modalCard" style="width:min(430px,94vw)">
     <button class="modalClose" data-close="qrModal" aria-label="閉じる">×</button>
     <h2 id="qrTitle">3D天気図</h2>
-    <canvas id="qrCanvas" width="280" height="280"></canvas>
+    <div id="qrCanvas" aria-label="3D天気図のQRコード"></div>
     <div class="qrUrl">https://scd-ku.github.io/3dtenkizu</div>
   </div>
 </div>
@@ -691,7 +696,7 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
 <script type="module">
 import * as THREE from 'three';
@@ -5142,16 +5147,34 @@ function openModal(id){ document.getElementById(id)?.classList.add('open'); }
 function closeModal(id){ document.getElementById(id)?.classList.remove('open'); }
 
 ui.helpBtn.addEventListener('click',()=>openModal('helpModal'));
-ui.qrBtn.addEventListener('click',async()=>{
-  openModal('qrModal');
-  const canvas=document.getElementById('qrCanvas');
-  if(window.QRCode && canvas){
-    try{
-      await QRCode.toCanvas(canvas,PUBLIC_APP_URL,{width:280,margin:2,errorCorrectionLevel:'M'});
-    }catch(err){
-      console.warn('QR生成エラー',err);
+function renderAppQr(){
+  const host=document.getElementById('qrCanvas');
+  if(!host) return;
+  host.innerHTML='';
+
+  try{
+    if(typeof window.QRCode!=='function'){
+      throw new Error('QRコード生成ライブラリを読み込めませんでした。');
     }
+    new window.QRCode(host,{
+      text:PUBLIC_APP_URL,
+      width:280,
+      height:280,
+      colorDark:'#000000',
+      colorLight:'#ffffff'
+    });
+  }catch(err){
+    console.warn('QR生成エラー',err);
+    const fallback=document.createElement('div');
+    fallback.className='qrFallback';
+    fallback.textContent='QRコードを生成できませんでした。下のURLを開いてください。';
+    host.appendChild(fallback);
   }
+}
+
+ui.qrBtn.addEventListener('click',()=>{
+  openModal('qrModal');
+  requestAnimationFrame(renderAppQr);
 });
 
 document.querySelectorAll('[data-close]').forEach(btn=>{
