@@ -268,7 +268,11 @@
   #c.hovering{cursor:ns-resize}
 
   /* メニュー（開く/書き出し） */
-  .menu{position:absolute; z-index:5; background:#fff; border:1px solid var(--border); border-radius:.9rem; box-shadow:0 12px 32px #0002; padding:.35rem; display:none; min-width:200px}
+  .menu{
+    position:fixed;z-index:1200;background:#fff;border:1px solid var(--border);
+    border-radius:.9rem;box-shadow:0 14px 38px #0f172a2e;
+    padding:.35rem;display:none;min-width:220px;max-width:min(340px,calc(100vw - 16px))
+  }
   .menu.open{display:block}
   .menu button{display:block; width:100%; text-align:left; padding:.65rem .9rem; border:none; background:transparent; border-radius:.7rem; font-size:14px}
   .menu button:hover{background:#f1f5f9}
@@ -4731,15 +4735,32 @@ async function loadProjectSVG(svgText){
 
 /* ==== メニュー ==== */
 function toggleMenu(menu, anchorBtn){
-  const open = !menu.classList.contains('open');
+  const open=!menu.classList.contains('open');
   document.querySelectorAll('.menu.open').forEach(m=>m.classList.remove('open'));
   if(!open) return;
-  const r = anchorBtn.getBoundingClientRect();
-  menu.style.left = (r.left)+'px';
-  menu.style.top  = (r.bottom+4)+'px';
+
+  // ヘッダーのoverflowに切られないよう、開いている間はbody直下へ出す。
+  if(menu.parentElement!==document.body) document.body.appendChild(menu);
+
+  const r=anchorBtn.getBoundingClientRect();
+  menu.style.left='0px';
+  menu.style.top='0px';
   menu.classList.add('open');
+
+  const mw=menu.offsetWidth||220;
+  const mh=menu.offsetHeight||120;
+  const margin=8;
+  const left=Math.max(margin,Math.min(r.left,window.innerWidth-mw-margin));
+  let top=r.bottom+6;
+  if(top+mh>window.innerHeight-margin){
+    top=Math.max(margin,r.top-mh-6);
+  }
+  menu.style.left=Math.round(left)+'px';
+  menu.style.top=Math.round(top)+'px';
 }
 function closeMenus(){ document.querySelectorAll('.menu.open').forEach(m=>m.classList.remove('open')); }
+addEventListener('resize',closeMenus);
+addEventListener('scroll',closeMenus,true);
 document.getElementById('openBtn').addEventListener('click', ()=> toggleMenu(ui.openMenu, ui.openBtn));
 document.getElementById('exportBtn').addEventListener('click', ()=> toggleMenu(ui.exportMenu, ui.exportBtn));
 addEventListener('click', (e)=>{
